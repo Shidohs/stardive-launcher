@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Mongil: Star Dive Launcher
+Comment=Native Linux Launcher & Downloader for Mongil: Star Dive
+Exec=/home/shidox/.gemini/antigravity/scratch/stardive-launcher/target/release/stardive-launcher
+Icon=applications-games
+Terminal=false
+Type=Application
+Categories=Game;
+Keywords=mongil;star;dive;stardive;netmarble;

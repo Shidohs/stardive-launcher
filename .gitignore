@@ -1,0 +1,17 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Tauri
+/gen/
+src-tauri/target/
+
+# Logs & temp
+*.log
+launcher_game.log
+*.tmp
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db

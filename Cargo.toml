@@ -1,0 +1,23 @@
+[package]
+name = "stardive-launcher"
+version = "1.0.0"
+edition = "2021"
+authors = ["Shidox"]
+description = "Native Linux Launcher & Downloader for Mongil: Star Dive"
+
+[dependencies]
+tauri = { version = "2" }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking", "stream"] }
+tokio = { version = "1.38", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+md-5 = "0.10"
+hex = "0.4"
+dirs = "5.0"
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+
+[build-dependencies]
+tauri-build = "2"

@@ -1,0 +1,440 @@
+// Stardive Launcher - Frontend Controller
+
+const { invoke } = window.__TAURI__ ? window.__TAURI__ : { invoke: async () => {} };
+const { listen } = window.__TAURI__ ? window.__TAURI__.event : { listen: async () => {} };
+
+let currentStatus = {
+  is_installed: false,
+  installed_version: "1.03.00",
+  server_version: "1.03.00",
+  runner_name: "GE-Proton11-6",
+  has_gamemode: true,
+  is_downloading: false,
+  is_playing: false,
+};
+
+let currentConfig = null;
+
+// Initialize on DOM load
+document.addEventListener("DOMContentLoaded", async () => {
+  setupCarousel();
+  setupModals();
+  setupButtons();
+  await refreshStatus();
+  setupTauriListeners();
+});
+
+// Refresh Launcher and Game Status from Rust Backend
+async function refreshStatus() {
+  try {
+    const status = await invoke("get_launcher_status");
+    if (status) {
+      currentStatus = status;
+      updateUI();
+    }
+  } catch (err) {
+    console.error("Failed to get launcher status:", err);
+  }
+}
+
+// Update UI elements based on state
+function updateUI() {
+  // Update Chips
+  document.getElementById("version-text").textContent = `v${currentStatus.installed_version || "1.03.00"}`;
+  document.getElementById("runner-text").textContent = currentStatus.runner_name || "GE-Proton";
+  document.getElementById("gamemode-text").textContent = currentStatus.has_gamemode ? "GameMode ON" : "GameMode OFF";
+
+  const heroBtn = document.getElementById("btn-hero-action");
+  const ctaSvg = document.getElementById("cta-svg");
+  const ctaTitle = document.getElementById("cta-title");
+  const ctaSubtitle = document.getElementById("cta-subtitle");
+  const statusText = document.getElementById("status-text");
+  const progressContainer = document.getElementById("progress-container");
+
+  if (currentStatus.is_playing) {
+    heroBtn.className = "hero-cta-btn btn-play";
+    ctaSvg.innerHTML = '<path d="M8 5v14l11-7z"/>';
+    ctaTitle.textContent = "JUGANDO...";
+    ctaSubtitle.textContent = "Mongil: Star Dive en ejecución";
+    statusText.textContent = "Juego en ejecución (GE-Proton activo)";
+    progressContainer.style.display = "none";
+  } else if (currentStatus.is_downloading) {
+    heroBtn.className = "hero-cta-btn btn-cancel";
+    ctaSvg.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+    ctaTitle.textContent = "CANCELAR DESCARGA";
+    ctaSubtitle.textContent = "Pausar proceso actual";
+    progressContainer.style.display = "flex";
+  } else if (!currentStatus.is_installed) {
+    heroBtn.className = "hero-cta-btn btn-download";
+    ctaSvg.innerHTML = '<path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>';
+    ctaTitle.textContent = "DESCARGAR CLIENTE";
+    ctaSubtitle.textContent = "838 MB • Descarga Directa CDN";
+    statusText.textContent = "Cliente no instalado (Descarga: 838 MB)";
+    progressContainer.style.display = "none";
+  } else {
+    heroBtn.className = "hero-cta-btn btn-play";
+    ctaSvg.innerHTML = '<path d="M8 5v14l11-7z"/>';
+    ctaTitle.textContent = "INICIAR JUEGO";
+    ctaSubtitle.textContent = "GE-Proton • DXVK Async";
+    statusText.textContent = "Cliente detectado (Listo para jugar)";
+    progressContainer.style.display = "none";
+  }
+}
+
+// Setup Event Listeners for Tauri backend push events
+function setupTauriListeners() {
+  if (!listen) return;
+
+  // Real-time download progress from Rust Downloader
+  listen("download-progress", (event) => {
+    const prog = event.payload;
+    if (!prog) return;
+
+    currentStatus.is_downloading = !prog.is_completed;
+    const progressContainer = document.getElementById("progress-container");
+    progressContainer.style.display = "flex";
+
+    document.getElementById("progress-step-text").textContent = prog.status;
+    const pct = (prog.progress_ratio * 100).toFixed(1);
+    const speed = prog.speed_bytes_per_sec > 1048576 
+      ? (prog.speed_bytes_per_sec / 1048576).toFixed(2) + " MB/s" 
+      : (prog.speed_bytes_per_sec / 1024).toFixed(1) + " KB/s";
+    const eta = prog.eta_seconds ? `${prog.eta_seconds}s` : "--";
+
+    document.getElementById("progress-stats-text").textContent = `${pct}% • ${speed} • ETA: ${eta}`;
+    document.getElementById("progress-bar-fill").style.width = `${pct}%`;
+
+    if (prog.is_completed) {
+      setTimeout(() => {
+        refreshStatus();
+      }, 1000);
+    }
+  });
+
+  // Game state changes (terminated / running)
+  listen("game-status", (event) => {
+    const state = event.payload;
+    currentStatus.is_playing = state.is_running;
+    updateUI();
+  });
+}
+
+// Setup Interactive Carousel
+function setupCarousel() {
+  const slides = [
+    {
+      tag: "ACTUALIZACIÓN",
+      title: "Cliente Nativo Linux v1.03.00",
+      desc: "Bypass completo de Electron y CrashSight VEH con GE-Proton y DXVK Async.",
+    },
+    {
+      tag: "EVENTO",
+      title: "Recompensas de Pre-registro Activas",
+      desc: "Reclama tus personajes estelares y armas exclusivas en el portal de cupones.",
+    },
+    {
+      tag: "TIENDA",
+      title: "Descuentos en la Web Store",
+      desc: "Paquetes especiales y cristales con bonificación de lanzamiento.",
+    },
+  ];
+
+  let activeIndex = 0;
+  const tagEl = document.getElementById("carousel-tag");
+  const titleEl = document.getElementById("carousel-title");
+  const descEl = document.getElementById("carousel-desc");
+  const dots = document.querySelectorAll(".carousel-dots .dot");
+
+  function setSlide(idx) {
+    activeIndex = idx;
+    tagEl.textContent = slides[idx].tag;
+    titleEl.textContent = slides[idx].title;
+    descEl.textContent = slides[idx].desc;
+
+    dots.forEach((d, i) => {
+      d.classList.toggle("active", i === idx);
+    });
+  }
+
+  dots.forEach((dot) => {
+    dot.addEventListener("click", () => {
+      const idx = parseInt(dot.getAttribute("data-index"), 10);
+      setSlide(idx);
+    });
+  });
+
+  // Auto rotate every 6 seconds
+  setInterval(() => {
+    setSlide((activeIndex + 1) % slides.length);
+  }, 6000);
+}
+
+// Setup Button Actions
+function setupButtons() {
+  // Hero CTA Action Button
+  document.getElementById("btn-hero-action").addEventListener("click", async () => {
+    if (currentStatus.is_playing) return;
+
+    if (currentStatus.is_downloading) {
+      await invoke("cancel_download");
+      currentStatus.is_downloading = false;
+      updateUI();
+      return;
+    }
+
+    if (!currentStatus.is_installed) {
+      currentStatus.is_downloading = true;
+      updateUI();
+      await invoke("start_download");
+    } else {
+      currentStatus.is_playing = true;
+      updateUI();
+      try {
+        await invoke("launch_game");
+      } catch (err) {
+        alert("Error al iniciar juego: " + err);
+        currentStatus.is_playing = false;
+        updateUI();
+      }
+    }
+  });
+
+  // Repair Button
+  document.getElementById("btn-repair").addEventListener("click", async () => {
+    if (confirm("¿Deseas verificar y descargar nuevamente el cliente oficial?")) {
+      currentStatus.is_downloading = true;
+      updateUI();
+      await invoke("start_download");
+    }
+  });
+
+  // Open Game Folder Button
+  document.getElementById("btn-open-folder").addEventListener("click", async () => {
+    await invoke("open_folder", { target: "game" });
+  });
+
+  // Coupon Redeem Portal Button
+  document.getElementById("btn-coupon").addEventListener("click", async () => {
+    await invoke("open_external", { url: "https://couponweb.netmarble.com/coupon/monster2/" });
+  });
+
+  // Web Shop Button
+  document.getElementById("btn-shop").addEventListener("click", async () => {
+    await invoke("open_external", { url: "https://stardive-shop.netmarble.com/" });
+  });
+
+  // Discord Button
+  document.getElementById("btn-discord").addEventListener("click", async () => {
+    await invoke("open_external", { url: "https://discord.gg/stardive" });
+  });
+
+  // Fast FPS Quick Button
+  document.getElementById("btn-fps").addEventListener("click", () => {
+    document.getElementById("modal-quick-fps").style.display = "flex";
+  });
+  document.getElementById("close-quick-fps").addEventListener("click", () => {
+    document.getElementById("modal-quick-fps").style.display = "none";
+  });
+  document.getElementById("btn-save-quick-fps").addEventListener("click", async () => {
+    const selected = document.querySelector('input[name="quick-fps"]:checked').value;
+    await invoke("apply_fps_tweak", { fpsLimit: parseInt(selected, 10), vsync: false });
+    document.getElementById("modal-quick-fps").style.display = "none";
+  });
+
+  // Logs Modal
+  document.getElementById("btn-logs").addEventListener("click", async () => {
+    document.getElementById("modal-logs").style.display = "flex";
+    await refreshLogs();
+  });
+  document.getElementById("close-logs").addEventListener("click", () => {
+    document.getElementById("modal-logs").style.display = "none";
+  });
+  document.getElementById("btn-close-logs-footer").addEventListener("click", () => {
+    document.getElementById("modal-logs").style.display = "none";
+  });
+  document.getElementById("btn-refresh-logs").addEventListener("click", refreshLogs);
+  document.getElementById("btn-clear-logs").addEventListener("click", async () => {
+    await invoke("clear_logs");
+    document.getElementById("log-content").textContent = "";
+  });
+}
+
+// Refresh execution logs
+async function refreshLogs() {
+  try {
+    const logs = await invoke("get_logs");
+    document.getElementById("log-content").textContent = logs || "Sin registros recientes.";
+  } catch (err) {
+    document.getElementById("log-content").textContent = "Error al leer logs: " + err;
+  }
+}
+
+// Setup Settings Modal & Tabs
+function setupModals() {
+  const modal = document.getElementById("modal-settings");
+  const openBtn = document.getElementById("btn-settings");
+  const closeBtn = document.getElementById("close-settings");
+  const cancelBtn = document.getElementById("btn-cancel-settings");
+  const saveBtn = document.getElementById("btn-save-settings");
+
+  openBtn.addEventListener("click", async () => {
+    modal.style.display = "flex";
+    await loadSettingsForm();
+  });
+
+  closeBtn.addEventListener("click", () => (modal.style.display = "none"));
+  cancelBtn.addEventListener("click", () => (modal.style.display = "none"));
+
+  // Tab switching
+  const tabBtns = document.querySelectorAll(".dialog-tabs .tab-btn");
+  const tabContents = document.querySelectorAll(".dialog-body .tab-content");
+
+  tabBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      tabBtns.forEach((b) => b.classList.remove("active"));
+      tabContents.forEach((c) => c.classList.remove("active"));
+      btn.classList.add("active");
+      const targetId = btn.getAttribute("data-tab");
+      document.getElementById(targetId).classList.add("active");
+    });
+  });
+
+  // Save Settings
+  saveBtn.addEventListener("click", async () => {
+    if (!currentConfig) return;
+
+    currentConfig.proton_path = document.getElementById("cfg-proton").value;
+    currentConfig.game_dir = document.getElementById("cfg-game-dir").value;
+    currentConfig.prefix_dir = document.getElementById("cfg-prefix-dir").value;
+    currentConfig.launch_args = document.getElementById("cfg-args").value;
+    currentConfig.use_gamemode = document.getElementById("cfg-gamemode").checked;
+    currentConfig.use_mangohud = document.getElementById("cfg-mangohud").checked;
+    currentConfig.use_gamescope = document.getElementById("cfg-gamescope").checked;
+    currentConfig.gamescope_args = document.getElementById("cfg-gamescope-args").value;
+    currentConfig.dxvk_async = document.getElementById("cfg-dxvk").checked;
+    currentConfig.wine_esync = document.getElementById("cfg-esync").checked;
+    currentConfig.wine_fsync = document.getElementById("cfg-fsync").checked;
+    currentConfig.nvapi = document.getElementById("cfg-nvapi").checked;
+    currentConfig.proton_use_wined3d = document.getElementById("cfg-wined3d").checked;
+
+    // Parse custom env variables
+    const envStr = document.getElementById("cfg-custom-env").value.trim();
+    currentConfig.custom_env = {};
+    if (envStr) {
+      envStr.split(/\s+/).forEach((pair) => {
+        const idx = pair.indexOf("=");
+        if (idx > 0) {
+          const k = pair.substring(0, idx);
+          let v = pair.substring(idx + 1);
+          if (v.toLowerCase() === "false") v = "0";
+          if (v.toLowerCase() === "true") v = "1";
+          currentConfig.custom_env[k] = v;
+        }
+      });
+    }
+
+    const fpsRadio = document.querySelector('input[name="fps"]:checked');
+    if (fpsRadio) {
+      currentConfig.fps_limit = parseInt(fpsRadio.value, 10);
+    }
+    currentConfig.vsync = document.getElementById("cfg-vsync").checked;
+
+    await invoke("save_config", { config: currentConfig });
+    modal.style.display = "none";
+    await refreshStatus();
+  });
+
+  // Gamescope toggle input visibility
+  document.getElementById("cfg-gamescope").addEventListener("change", (e) => {
+    document.getElementById("gamescope-args-group").style.display = e.target.checked ? "block" : "none";
+  });
+
+  // Clear Shader cache
+  document.getElementById("btn-clear-shaders").addEventListener("click", async () => {
+    const count = await invoke("clear_shader_cache");
+    document.getElementById("dialog-feedback").textContent = `Se eliminaron ${count} archivos de caché de shaders.`;
+    setTimeout(() => {
+      document.getElementById("dialog-feedback").textContent = "";
+    }, 4000);
+  });
+
+  // Rewrite Manifest
+  document.getElementById("btn-rewrite-manifest").addEventListener("click", async () => {
+    await invoke("rewrite_manifest");
+    document.getElementById("dialog-feedback").textContent = "game_manifest.json regenerado.";
+    setTimeout(() => {
+      document.getElementById("dialog-feedback").textContent = "";
+    }, 4000);
+    await refreshStatus();
+  });
+
+  // Apply FPS tweak inside tab
+  document.getElementById("btn-apply-fps").addEventListener("click", async () => {
+    const fpsRadio = document.querySelector('input[name="fps"]:checked');
+    const fps = fpsRadio ? parseInt(fpsRadio.value, 10) : 144;
+    const vsync = document.getElementById("cfg-vsync").checked;
+    await invoke("apply_fps_tweak", { fpsLimit: fps, vsync });
+    document.getElementById("dialog-feedback").textContent = "Configuración de FPS inyectada.";
+    setTimeout(() => {
+      document.getElementById("dialog-feedback").textContent = "";
+    }, 4000);
+  });
+}
+
+// Load current configuration into settings inputs
+async function loadSettingsForm() {
+  try {
+    const res = await invoke("get_config_and_runners");
+    currentConfig = res.config;
+    const runners = res.runners || [];
+
+    document.getElementById("cfg-proton").value = currentConfig.proton_path || "";
+    document.getElementById("cfg-game-dir").value = currentConfig.game_dir || "";
+    document.getElementById("cfg-prefix-dir").value = currentConfig.prefix_dir || "";
+    document.getElementById("cfg-args").value = currentConfig.launch_args || "NMENV=nmp";
+
+    document.getElementById("cfg-gamemode").checked = !!currentConfig.use_gamemode;
+    document.getElementById("cfg-mangohud").checked = !!currentConfig.use_mangohud;
+    document.getElementById("cfg-gamescope").checked = !!currentConfig.use_gamescope;
+    document.getElementById("gamescope-args-group").style.display = currentConfig.use_gamescope ? "block" : "none";
+    document.getElementById("cfg-gamescope-args").value = currentConfig.gamescope_args || "-W 1920 -H 1080 -f";
+
+    document.getElementById("cfg-dxvk").checked = !!currentConfig.dxvk_async;
+    document.getElementById("cfg-esync").checked = !!currentConfig.wine_esync;
+    document.getElementById("cfg-fsync").checked = !!currentConfig.wine_fsync;
+    document.getElementById("cfg-nvapi").checked = !!currentConfig.nvapi;
+    document.getElementById("cfg-wined3d").checked = !!currentConfig.proton_use_wined3d;
+    document.getElementById("cfg-vsync").checked = !!currentConfig.vsync;
+
+    // Load custom env vars as string
+    if (currentConfig.custom_env && typeof currentConfig.custom_env === "object") {
+      const envPairs = Object.entries(currentConfig.custom_env)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(" ");
+      document.getElementById("cfg-custom-env").value = envPairs;
+    } else {
+      document.getElementById("cfg-custom-env").value = "";
+    }
+
+    // Set FPS radio
+    const fpsVal = currentConfig.fps_limit !== undefined ? currentConfig.fps_limit.toString() : "144";
+    const radio = document.querySelector(`input[name="fps"][value="${fpsVal}"]`);
+    if (radio) radio.checked = true;
+
+    // Populate auto-detected Proton runners
+    const chipsContainer = document.getElementById("runner-chips-list");
+    chipsContainer.innerHTML = "";
+    runners.forEach((r) => {
+      const btn = document.createElement("button");
+      btn.className = "runner-chip-btn";
+      const parts = r.split("/");
+      btn.textContent = `Usar ${parts[parts.length - 1]}`;
+      btn.addEventListener("click", () => {
+        document.getElementById("cfg-proton").value = r;
+      });
+      chipsContainer.appendChild(btn);
+    });
+  } catch (err) {
+    console.error("Failed to load settings:", err);
+  }
+}

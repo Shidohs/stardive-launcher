@@ -303,6 +303,12 @@ impl AuthManager {
     }
 
     pub fn save_session(session: &AuthSession) -> Result<()> {
+        if session.launcher_token.starts_with('/') || session.launcher_token.len() < 20 {
+            return Err(anyhow!(
+                "Rechazado guardado de sesión con token inválido ('{}')",
+                session.launcher_token
+            ));
+        }
         let path = Self::auth_file_path();
         let json = serde_json::to_string_pretty(session)?;
         fs::write(path, json)?;
@@ -537,7 +543,7 @@ impl AuthManager {
                     if let Some((k, v)) = pair.split_once('=') {
                         let clean_v = v.split('#').next().unwrap_or(v);
                         match k {
-                            "accessToken" | "access_token" => access_token = clean_v.to_string(),
+                            "accessToken" | "access_token" | "launcher_token" | "launcherToken" | "token" => access_token = clean_v.to_string(),
                             "refreshToken" | "refresh_token" => refresh_token = Some(clean_v.to_string()),
                             "netmarbleId" | "netmarble_id" => netmarble_id = Some(clean_v.to_string()),
                             _ => {}
@@ -549,11 +555,20 @@ impl AuthManager {
 
         // Caso 3: Token directo (string plano)
         if access_token.is_empty() {
-            access_token = trimmed.to_string();
+            let t = trimmed;
+            if !t.starts_with('/')
+                && !t.starts_with("http")
+                && !t.contains(' ')
+                && !t.contains('?')
+                && !t.contains('&')
+                && t.len() >= 20
+            {
+                access_token = t.to_string();
+            }
         }
 
-        if access_token.is_empty() {
-            return Err(anyhow!("No se pudo extraer el token de acceso del input proporcionado."));
+        if access_token.is_empty() || access_token.starts_with('/') || access_token.len() < 20 {
+            return Err(anyhow!("No se pudo extraer un token de acceso válido de Netmarble."));
         }
 
         // Consultar usuario real de Netmarble Members (netmarble-auth/user)
@@ -803,6 +818,31 @@ impl AuthManager {
                                         };
                                         let req_str = String::from_utf8_lossy(&req_buf[..read_n]);
 
+                                        let first_line = req_str.lines().next().unwrap_or_default();
+                                        let target = first_line.split_whitespace().nth(1).unwrap_or_default();
+
+                                        // Ignorar favicons y recursos secundarios solicitados automáticamente por navegadores
+                                        if target.starts_with("/favicon") || target.ends_with(".ico") || target.ends_with(".png") {
+                                            let not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                                            let _ = stream.write_all(not_found.as_bytes()).await;
+                                            let _ = stream.flush().await;
+                                            return;
+                                        }
+
+                                        let is_auth_request = target.contains("accessToken")
+                                            || target.contains("access_token")
+                                            || target.contains("launcher_token")
+                                            || target.contains("launcherToken")
+                                            || target.contains("token=")
+                                            || target.contains("code=");
+
+                                        if !target.starts_with("/redirectLauncher") && !is_auth_request {
+                                            let not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                                            let _ = stream.write_all(not_found.as_bytes()).await;
+                                            let _ = stream.flush().await;
+                                            return;
+                                        }
+
                                         let html_body = r#"<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><title>Mongil: Star Dive - Autenticación</title></head>
@@ -825,14 +865,12 @@ impl AuthManager {
                                         let _ = stream.write_all(http_response.as_bytes()).await;
                                         let _ = stream.flush().await;
 
-                                        if let Some(first_line) = req_str.lines().next() {
-                                            if let Some(target) = first_line.split_whitespace().nth(1) {
-                                                println!("Petición HTTP de autenticación recibida: {}", target);
-                                                if let Ok(session) = Self::process_auth_result(target).await {
-                                                    let mut opt = tx_inner.lock().await;
-                                                    if let Some(sender) = opt.take() {
-                                                        let _ = sender.send(session);
-                                                    }
+                                        if is_auth_request {
+                                            println!("Petición HTTP de autenticación recibida: {}", target);
+                                            if let Ok(session) = Self::process_auth_result(target).await {
+                                                let mut opt = tx_inner.lock().await;
+                                                if let Some(sender) = opt.take() {
+                                                    let _ = sender.send(session);
                                                 }
                                             }
                                         }
@@ -947,4 +985,29 @@ WINE REGISTRY Version 2
         assert!(url.contains("supportFeature=redirectParams%7CaccessToken"), "Debe solicitar el accessToken en redirectParams");
         assert!(url.contains("idpType=google"), "Debe enviar idpType=google para Google SSO");
     }
+
+    #[tokio::test]
+    async fn process_auth_result_rechaza_favicon_y_rutas_http() {
+        assert!(AuthManager::process_auth_result("/favicon.ico").await.is_err());
+        assert!(AuthManager::process_auth_result("/redirectLauncher").await.is_err());
+        assert!(AuthManager::process_auth_result("/").await.is_err());
+        assert!(AuthManager::process_auth_result("").await.is_err());
+    }
+
+    #[test]
+    fn save_session_rechaza_token_invalido() {
+        let bad_session = super::AuthSession {
+            launcher_token: "/favicon.ico".to_string(),
+            channel: "email".to_string(),
+            channel_code: 20,
+            player_id: String::new(),
+            profile_name: "Test".to_string(),
+            profile_img_url: String::new(),
+            expires_at: 0,
+            device_key: "dev".to_string(),
+            refresh_token: None,
+        };
+        assert!(AuthManager::save_session(&bad_session).is_err());
+    }
 }
+

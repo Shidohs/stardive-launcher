@@ -361,12 +361,16 @@ async fn start_auth_flow(
 
     let app_handle_clone = app_handle.clone();
     let device_key = auth::AuthManager::get_or_create_device_key();
+    // `nmDeviceKey` = MD5 que el SDK del juego escribió en `Netmarble dev\monster2`.
+    // La API lo exige junto al UUID del launcher o responde `1210 invalid device key`.
+    let nm_device_key = auth::AuthManager::read_nm_device_key_from_wine_registry()
+        .unwrap_or_else(|| device_key.clone());
 
     tokio::spawn(async move {
         match rx.await {
             Ok(payload) => {
                 println!("Callback de canal recibido: {}", payload.channel);
-                match auth::AuthManager::exchange_channel_token(&payload, &device_key).await {
+                match auth::AuthManager::exchange_channel_token(&payload, &device_key, &nm_device_key).await {
                     Ok(session) => {
                         let status = auth::AuthManager::get_status();
                         let _ = app_handle_clone.emit(
@@ -417,11 +421,13 @@ async fn manual_auth(
     }
 
     let device_key = auth::AuthManager::get_or_create_device_key();
+    let nm_device_key = auth::AuthManager::read_nm_device_key_from_wine_registry()
+        .unwrap_or_else(|| device_key.clone());
 
     let session = if trimmed.starts_with('{') {
         let payload: auth::ChannelPayload = serde_json::from_str(trimmed)
             .map_err(|e| format!("Formato JSON no válido: {}", e))?;
-        auth::AuthManager::exchange_channel_token(&payload, &device_key)
+        auth::AuthManager::exchange_channel_token(&payload, &device_key, &nm_device_key)
             .await
             .map_err(|e| e.to_string())?
     } else {

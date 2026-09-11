@@ -71,6 +71,8 @@ pub struct LauncherStatusPayload {
     pub is_authenticated: bool,
     pub player_name: String,
     pub profile_img_url: String,
+    pub player_id: String,
+    pub channel: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -132,6 +134,8 @@ async fn get_launcher_status(
         is_authenticated: auth_status.is_logged_in,
         player_name: auth_status.profile_name,
         profile_img_url: auth_status.profile_img_url,
+        player_id: auth_status.player_id,
+        channel: auth_status.channel,
     })
 }
 
@@ -355,47 +359,28 @@ async fn start_auth_flow(
         .map_err(|e| e.to_string())?;
 
     let auth_url = auth::AuthManager::build_auth_url(&channel, port, "es");
-    println!("Abriendo Netmarble SSO en navegador: {}", auth_url);
+    println!("Abriendo Netmarble Members SSO en navegador: {}", auth_url);
 
     let _ = std::process::Command::new("xdg-open").arg(&auth_url).spawn();
 
     let app_handle_clone = app_handle.clone();
-    let device_key = auth::AuthManager::get_or_create_device_key();
-    // `nmDeviceKey` = MD5 que el SDK del juego escribió en `Netmarble dev\monster2`.
-    // La API lo exige junto al UUID del launcher o responde `1210 invalid device key`.
-    let nm_device_key = auth::AuthManager::read_nm_device_key_from_wine_registry()
-        .unwrap_or_else(|| device_key.clone());
 
     tokio::spawn(async move {
         match rx.await {
-            Ok(payload) => {
-                println!("Callback de canal recibido: {}", payload.channel);
-                match auth::AuthManager::exchange_channel_token(&payload, &device_key, &nm_device_key).await {
-                    Ok(session) => {
-                        let status = auth::AuthManager::get_status();
-                        let _ = app_handle_clone.emit(
-                            "auth-status-changed",
-                            serde_json::json!({
-                                "success": true,
-                                "status": status,
-                                "profile_name": session.profile_name
-                            }),
-                        );
-                    }
-                    Err(e) => {
-                        eprintln!("Error al canjear token con Netmarble: {}", e);
-                        let _ = app_handle_clone.emit(
-                            "auth-status-changed",
-                            serde_json::json!({
-                                "success": false,
-                                "error": e.to_string()
-                            }),
-                        );
-                    }
-                }
+            Ok(session) => {
+                println!("✓ Sesión oficial Netmarble NM recibida para {}", session.profile_name);
+                let status = auth::AuthManager::get_status();
+                let _ = app_handle_clone.emit(
+                    "auth-status-changed",
+                    serde_json::json!({
+                        "success": true,
+                        "status": status,
+                        "profile_name": session.profile_name
+                    }),
+                );
             }
             Err(_) => {
-                eprintln!("Listener de autenticación cerrado.");
+                eprintln!("Listener de autenticación cerrado o expirado.");
                 let _ = app_handle_clone.emit(
                     "auth-status-changed",
                     serde_json::json!({
@@ -417,24 +402,12 @@ async fn manual_auth(
 ) -> Result<auth::AuthStatusPayload, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
-        return Err("El token o payload no puede estar vacío.".to_string());
+        return Err("El token, URL o payload no puede estar vacío.".to_string());
     }
 
-    let device_key = auth::AuthManager::get_or_create_device_key();
-    let nm_device_key = auth::AuthManager::read_nm_device_key_from_wine_registry()
-        .unwrap_or_else(|| device_key.clone());
-
-    let session = if trimmed.starts_with('{') {
-        let payload: auth::ChannelPayload = serde_json::from_str(trimmed)
-            .map_err(|e| format!("Formato JSON no válido: {}", e))?;
-        auth::AuthManager::exchange_channel_token(&payload, &device_key, &nm_device_key)
-            .await
-            .map_err(|e| e.to_string())?
-    } else {
-        auth::AuthManager::direct_token_login(trimmed)
-            .await
-            .map_err(|e| e.to_string())?
-    };
+    let session = auth::AuthManager::process_auth_result(trimmed)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let status = auth::AuthManager::get_status();
     let _ = app_handle.emit(

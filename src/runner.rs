@@ -83,14 +83,14 @@ impl GameRunner {
             // Sincronizar clave de dispositivo oficial en el registro de Wine (HKCU\Software\Netmarble\NetmarbleSDK)
             ensure_wine_registry_device_key(prefix_dir, &session.device_key);
 
-            // Inyectar argumentos en formato estándar y con guion (-NMAUTH) para Unreal Engine / NetmarbleSDK
-            cmd.arg("NMAUTH_TYPE=nmlauncher");
-            cmd.arg("-NMAUTH_TYPE=nmlauncher");
+            // Inyectar argumentos en formato oficial para Unreal Engine / NetmarbleSDK (platformAuthType: NM)
+            cmd.arg("NMAUTH_TYPE=netmarble");
+            cmd.arg("-NMAUTH_TYPE=netmarble");
             cmd.arg(format!("NMAUTH_TOKEN={}", session.launcher_token));
             cmd.arg(format!("-NMAUTH_TOKEN={}", session.launcher_token));
 
             // Variables de entorno de Wine por si el SDK las consulta vía GetEnvironmentVariableW
-            cmd.env("NMAUTH_TYPE", "nmlauncher");
+            cmd.env("NMAUTH_TYPE", "netmarble");
             cmd.env("NMAUTH_TOKEN", &session.launcher_token);
             cmd.env("NMDeviceKey", &session.device_key);
             cmd.env("DEVICE_KEY", &session.device_key);

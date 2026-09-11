@@ -121,15 +121,15 @@ function updateUI() {
     heroBtn.className = "hero-cta-btn btn-play";
     ctaSvg.innerHTML = '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>';
     ctaTitle.textContent = "INICIAR SESIÓN";
-    ctaSubtitle.textContent = "Netmarble SSO V5 requerido";
-    statusText.textContent = "Inicia sesión con Google o Netmarble para jugar";
+    ctaSubtitle.textContent = "Netmarble SSO requerido";
+    statusText.textContent = "Inicia sesión con tu cuenta de Netmarble para jugar";
     progressContainer.style.display = "none";
   } else {
     heroBtn.className = "hero-cta-btn btn-play";
     ctaSvg.innerHTML = '<path d="M8 5v14l11-7z"/>';
     ctaTitle.textContent = "INICIAR JUEGO";
     ctaSubtitle.textContent = "GE-Proton • Sesión Netmarble Activa";
-    statusText.textContent = `Sesión iniciada: ${currentStatus.player_name || "Piloto"} (Listo para jugar)`;
+    statusText.textContent = `Sesión iniciada: ${currentStatus.player_name || "Cuenta Netmarble"} (Listo para jugar)`;
     progressContainer.style.display = "none";
   }
 }
@@ -394,10 +394,16 @@ function closeAuthModal() {
 }
 
 function openAccountModal() {
-  document.getElementById("account-name").textContent = currentStatus.player_name || "Piloto";
+  document.getElementById("account-name").textContent = currentStatus.player_name || "Cuenta Netmarble";
   document.getElementById("account-id").textContent = currentStatus.player_id
     ? `ID: ${currentStatus.player_id}`
     : "Sesión activa";
+  const chElem = document.getElementById("account-channel");
+  if (chElem) {
+    chElem.textContent = currentStatus.channel
+      ? `Netmarble (${currentStatus.channel.toUpperCase()})`
+      : "Netmarble SSO";
+  }
   if (currentStatus.profile_img_url) {
     document.getElementById("account-avatar").src = currentStatus.profile_img_url;
   }
@@ -433,9 +439,10 @@ async function startAuth(channel) {
 }
 
 async function submitManualAuth() {
-  const input = document.getElementById("manual-token-input").value.trim();
+  const inputElem = document.getElementById("manual-token-input") || document.getElementById("auth-fallback-url");
+  const input = inputElem ? inputElem.value.trim() : "";
   if (!input) {
-    showAuthFeedback("Por favor ingresa un token válido.", "warning");
+    showAuthFeedback("Por favor ingresa un token o URL de redirección válido.", "warning");
     return;
   }
   try {

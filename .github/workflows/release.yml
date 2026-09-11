@@ -78,30 +78,30 @@ jobs:
             cp icons/icon.png "$STAGING/usr/share/pixmaps/stardive-launcher.png"
           fi
 
-          cat << 'EOF' > "$STAGING/usr/share/applications/stardive-launcher.desktop"
-[Desktop Entry]
-Name=Mongil: Star Dive Launcher
-Comment=Native Linux Launcher & Downloader for Mongil: Star Dive
-Exec=/usr/bin/stardive-launcher
-Icon=stardive-launcher
-Terminal=false
-Type=Application
-Categories=Game;
-Keywords=mongil;star;dive;stardive;netmarble;gacha;
-EOF
+          printf "%s\n" \
+            "[Desktop Entry]" \
+            "Name=Mongil: Star Dive Launcher" \
+            "Comment=Native Linux Launcher & Downloader for Mongil: Star Dive" \
+            "Exec=/usr/bin/stardive-launcher" \
+            "Icon=stardive-launcher" \
+            "Terminal=false" \
+            "Type=Application" \
+            "Categories=Game;" \
+            "Keywords=mongil;star;dive;stardive;netmarble;gacha;" \
+            > "$STAGING/usr/share/applications/stardive-launcher.desktop"
 
-          cat << EOF > "$STAGING/DEBIAN/control"
-Package: stardive-launcher
-Version: ${PLAIN_VERSION}
-Section: games
-Priority: optional
-Architecture: amd64
-Maintainer: Shidox <https://github.com/Shidohs>
-Description: Native Linux Launcher & Downloader for Mongil: Star Dive
- Stardive Launcher is an optimized native Linux launcher and downloader
- for Mongil: Star Dive with Netmarble SSO authentication, GE-Proton integration,
- and performance optimizations.
-EOF
+          printf "%s\n" \
+            "Package: stardive-launcher" \
+            "Version: ${PLAIN_VERSION}" \
+            "Section: games" \
+            "Priority: optional" \
+            "Architecture: amd64" \
+            "Maintainer: Shidox <https://github.com/Shidohs>" \
+            "Description: Native Linux Launcher & Downloader for Mongil: Star Dive" \
+            " Stardive Launcher is an optimized native Linux launcher and downloader" \
+            " for Mongil: Star Dive with Netmarble SSO authentication, GE-Proton integration," \
+            " and performance optimizations." \
+            > "$STAGING/DEBIAN/control"
 
           dpkg-deb --build "$STAGING" "stardive-launcher_${PLAIN_VERSION}_amd64.deb"
 

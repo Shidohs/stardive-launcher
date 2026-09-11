@@ -98,6 +98,93 @@ impl AuthManager {
         config_dir.join("auth.json")
     }
 
+    /// Lee la clave `NMDeviceKey` desde el registro de Wine del prefijo.
+    ///
+    /// El launcher oficial (Electron) NO genera esta clave: la LEE del registro
+    /// `HKCU\SOFTWARE\Netmarble\NetmarbleSDK`, donde el SDK del juego la escribió
+    /// la primera vez que corrió. Generar una UUID propia rompe el contrato con el
+    /// SDK y produce el error "Please log in again through the launcher".
+    fn read_device_key_from_wine_registry() -> Option<String> {
+        // 1) Averiguar el prefijo configurado (pfx/user.reg vive bajo prefix_dir)
+        let cfg_path = dirs::config_dir()
+            .unwrap_or_else(|| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("/home/shidox"))
+                    .join(".config")
+            })
+            .join("stardive-launcher")
+            .join("config.json");
+
+        let prefix = fs::read_to_string(&cfg_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("prefix_dir").and_then(|p| p.as_str()).map(PathBuf::from));
+
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if let Some(p) = prefix {
+            candidates.push(p.join("pfx").join("user.reg"));
+            candidates.push(p.join("user.reg"));
+        }
+        // Fallback: ubicación por defecto del prefix
+        if let Some(home) = dirs::home_dir() {
+            let def = home.join("Games").join("mongil-star-dive");
+            candidates.push(def.join("pfx").join("user.reg"));
+            candidates.push(def.join("user.reg"));
+        }
+
+        for reg_path in candidates {
+            let Ok(content) = fs::read_to_string(&reg_path) else {
+                continue;
+            };
+            if let Some(v) = Self::parse_device_key_from_reg_content(&content) {
+                return Some(v);
+            }
+        }
+        None
+    }
+
+    /// Extrae `NMDeviceKey` (o, en su defecto, `DeviceKey`) del contenido crudo de
+    /// un `user.reg` de Wine. Función pura → testeable sin tocar el disco.
+    ///
+    /// El launcher oficial (`createNMDeviceKey` en `background.js`) hace EXACTAMENTE
+    /// esto: lee `HKCU\SOFTWARE\Netmarble\NetmarbleSDK` → `NMDeviceKey`. Nunca genera
+    /// una UUID propia. Replicamos fielmente ese contrato.
+    fn parse_device_key_from_reg_content(content: &str) -> Option<String> {
+        // La sección en el archivo aparece como `[Software\\Netmarble\\NetmarbleSDK]`
+        // (dos backslashes literales). Se aceptan ambas variantes por robustez.
+        for section in [
+            "[Software\\\\Netmarble\\\\NetmarbleSDK]",
+            "[Software\\Netmarble\\NetmarbleSDK]",
+        ] {
+            let Some(sec_idx) = content.find(section) else {
+                continue;
+            };
+            // Recortar el bloque de la sección: hasta el siguiente encabezado `\n[`.
+            let rest = &content[sec_idx..];
+            let block_end = rest[section.len()..]
+                .find("\n[")
+                .map(|o| section.len() + o)
+                .unwrap_or(rest.len());
+            let block = &rest[..block_end];
+
+            // Orden de preferencia: la clave que el SDK escribe primero.
+            for key_name in ["NMDeviceKey", "DeviceKey"] {
+                let needle = format!("\"{}\"=\"", key_name);
+                let Some(ki) = block.find(&needle) else {
+                    continue;
+                };
+                let start = ki + needle.len();
+                if let Some(end) = block[start..].find('"') {
+                    let val = block[start..start + end].trim().to_string();
+                    if !val.is_empty() {
+                        return Some(val);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     pub fn get_or_create_device_key() -> String {
         let path = dirs::config_dir()
             .unwrap_or_else(|| {
@@ -108,6 +195,15 @@ impl AuthManager {
             .join("stardive-launcher")
             .join("device_key");
 
+        // 1) ADOPTAR la clave que el SDK del juego ya escribió en el registro de Wine.
+        //    Esto replica exactamente el comportamiento del launcher oficial
+        //    (`createNMDeviceKey` en background.js). Si existe, mandamos y persistimos esa.
+        if let Some(reg_key) = Self::read_device_key_from_wine_registry() {
+            let _ = fs::write(&path, &reg_key);
+            return reg_key;
+        }
+
+        // 2) Fallback: clave persistida localmente (instalación sin registro aún).
         if let Ok(key) = fs::read_to_string(&path) {
             let trimmed = key.trim().to_string();
             if !trimmed.is_empty() {
@@ -115,6 +211,7 @@ impl AuthManager {
             }
         }
 
+        // 3) Último recurso: generar una nueva (solo si el juego nunca corrió).
         let new_key = Uuid::new_v4().to_string();
         let _ = fs::write(&path, &new_key);
         new_key
@@ -485,5 +582,81 @@ impl AuthManager {
         });
 
         Ok((bound_port, rx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AuthManager;
+
+    /// Caso feliz: el registro tiene la sección con doble backslash (formato real de Wine)
+    /// y la clave que el SDK escribió. DEBE devolver ese valor, no una UUID nueva.
+    #[test]
+    fn parsea_nmdevicekey_del_registro_real() {
+        let reg = r#"
+WINE REGISTRY Version 2
+;; All keys relative to \\User\\S-1-5-21
+
+[Software\\Netmarble\\NetmarbleSDK] 1789100489
+#time=1dd41a504a2e832
+"NMDeviceKey"="7DD6F8964B2BA7339F4B3DA62A15C75A"
+
+[Software\\Valve\\Steam] 1787951530
+#time=1dd3731e3d9823c
+"SteamExe"="C:\\Program Files (x86)\\Steam\\Steam.exe"
+"#;
+        let got = AuthManager::parse_device_key_from_reg_content(reg);
+        assert_eq!(got.as_deref(), Some("7DD6F8964B2BA7339F4B3DA62A15C75A"));
+    }
+
+    /// Variante con un solo backslash (por si algún backend serializa distinto).
+    #[test]
+    fn parsea_variante_un_backslash() {
+        let reg = "[Software\\Netmarble\\NetmarbleSDK]\n\"NMDeviceKey\"=\"ABCDEF0123456789\"\n";
+        let got = AuthManager::parse_device_key_from_reg_content(reg);
+        assert_eq!(got.as_deref(), Some("ABCDEF0123456789"));
+    }
+
+    /// Si no hay `NMDeviceKey` pero sí `DeviceKey`, debe caer al fallback.
+    #[test]
+    fn cae_a_devicekey_si_falta_nmdevicekey() {
+        let reg = r#"[Software\\Netmarble\\NetmarbleSDK]
+"DeviceKey"="C7760262485247B631ED50B16D02FA10"
+"#;
+        let got = AuthManager::parse_device_key_from_reg_content(reg);
+        assert_eq!(got.as_deref(), Some("C7760262485247B631ED50B16D02FA10"));
+    }
+
+    /// Preferencia: si están ambas, `NMDeviceKey` gana.
+    #[test]
+    fn prefiere_nmdevicekey_sobre_devicekey() {
+        let reg = r#"[Software\\Netmarble\\NetmarbleSDK]
+"DeviceKey"="DEADBEEF"
+"NMDeviceKey"="CAFEBABE"
+"#;
+        let got = AuthManager::parse_device_key_from_reg_content(reg);
+        assert_eq!(got.as_deref(), Some("CAFEBABE"));
+    }
+
+    /// El parser NO debe sangrar hacia la siguiente sección del registro.
+    #[test]
+    fn no_sangra_a_la_siguiente_seccion() {
+        let reg = r#"[Software\\Netmarble\\NetmarbleSDK]
+#time=1dd41a504a2e832
+
+[Software\\Netmarble dev\\monster2]
+"DeviceKey"="D943FB2D4CED0E73939D0BB51C58C899"
+"#;
+        // La sección NetmarbleSDK está vacía → el parser no debe tomar la DeviceKey
+        // de la sección `Netmarble dev` (otra ruta).
+        let got = AuthManager::parse_device_key_from_reg_content(reg);
+        assert_eq!(got, None);
+    }
+
+    /// Sin la sección → None (nunca inventar).
+    #[test]
+    fn sin_seccion_devuelve_none() {
+        let reg = "[Software\\\\Valve\\\\Steam]\n\"Foo\"=\"Bar\"\n";
+        assert_eq!(AuthManager::parse_device_key_from_reg_content(reg), None);
     }
 }

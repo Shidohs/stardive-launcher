@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 #[derive(Parser, Debug)]
 #[command(name = "stardive-launcher")]
 #[command(author = "Shidox")]
-#[command(version = "1.0.0")]
+#[command(version)]
 #[command(about = "Native Linux Launcher & Downloader for Mongil: Star Dive", long_about = None)]
 struct Cli {
     /// Inicia el juego directamente con Proton

@@ -1,6 +1,6 @@
 [package]
 name = "stardive-launcher"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 authors = ["Shidox"]
 description = "Native Linux Launcher & Downloader for Mongil: Star Dive"

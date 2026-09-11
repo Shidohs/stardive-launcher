@@ -520,7 +520,7 @@ impl AuthManager {
             }
         }
 
-        // Caso 2: URL con query string (nmmonster2://, http://, https://) o query string directa
+        // Caso 2: URL con query string (nmmonster2://, http://, https://, /redirectLauncher?...) o query string directa
         if access_token.is_empty() {
             let qs = if let Some(pos) = trimmed.find('?') {
                 &trimmed[pos + 1..]
@@ -530,13 +530,16 @@ impl AuthManager {
                 ""
             };
 
-            if !qs.is_empty() {
-                for pair in qs.split('&') {
+            let clean_qs = qs.split_whitespace().next().unwrap_or(qs);
+
+            if !clean_qs.is_empty() {
+                for pair in clean_qs.split('&') {
                     if let Some((k, v)) = pair.split_once('=') {
+                        let clean_v = v.split('#').next().unwrap_or(v);
                         match k {
-                            "accessToken" | "access_token" => access_token = v.to_string(),
-                            "refreshToken" | "refresh_token" => refresh_token = Some(v.to_string()),
-                            "netmarbleId" | "netmarble_id" => netmarble_id = Some(v.to_string()),
+                            "accessToken" | "access_token" => access_token = clean_v.to_string(),
+                            "refreshToken" | "refresh_token" => refresh_token = Some(clean_v.to_string()),
+                            "netmarbleId" | "netmarble_id" => netmarble_id = Some(clean_v.to_string()),
                             _ => {}
                         }
                     }
@@ -705,7 +708,7 @@ impl AuthManager {
     }
 
     /// Construye la URL oficial de SSO de Netmarble Members (NM) para abrir en el navegador
-    pub fn build_auth_url(_channel: &str, _port: u16, lang: &str) -> String {
+    pub fn build_auth_url(channel: &str, port: u16, lang: &str) -> String {
         let language = match lang {
             "es" | "es_ES" | "es-ES" => "es",
             "en" | "en_US" | "en-US" => "en",
@@ -716,13 +719,21 @@ impl AuthManager {
         };
 
         let device_key = Self::get_or_create_device_key();
+        let redirect_url = format!("http%3A%2F%2F127.0.0.1%3A{}%2FredirectLauncher", port);
+
+        let idp_param = match channel {
+            "google" => "&idpType=google",
+            "apple" => "&idpType=apple",
+            _ => "",
+        };
+
         format!(
-            "https://members.netmarble.com/auth?clientId={}&countryCode=US&language={}&osType=PC&webViewType=launcher&authType=signin&deviceKey={}_{}&showImageBanner=N&gameCode={}&forceCheckIdentity=N",
-            NM_CLIENT_ID, language, device_key, GAME_CODE, GAME_CODE
+            "https://members.netmarble.com/auth?clientId={}&countryCode=US&language={}&osType=PC&webViewType=web&authType=signin&deviceKey={}_{}&showImageBanner=N&gameCode={}&forceCheckIdentity=N&redirectUrl={}&supportFeature=redirectParams%7CaccessToken{}",
+            NM_CLIENT_ID, language, device_key, GAME_CODE, GAME_CODE, redirect_url, idp_param
         )
     }
 
-    /// Inicia el servidor WebSocket en 127.0.0.1:port para esperar el callback del navegador
+    /// Inicia el servidor HTTP / WebSocket en 127.0.0.1:port para esperar el callback del navegador
     pub async fn listen_for_auth_callback(
         port: u16,
     ) -> Result<(u16, tokio::sync::oneshot::Receiver<AuthSession>)> {
@@ -730,7 +741,6 @@ impl AuthManager {
         let listener = match TcpListener::bind(&addr).await {
             Ok(l) => l,
             Err(_) => {
-                // Fallback a puerto aleatorio si el 55000 está ocupado
                 let fallback = TcpListener::bind("127.0.0.1:0").await?;
                 fallback
             }
@@ -741,7 +751,7 @@ impl AuthManager {
         let tx_mutex = Arc::new(Mutex::new(Some(tx)));
 
         tokio::spawn(async move {
-            println!("Servidor de autenticación local escuchando en ws://127.0.0.1:{}/redirectLauncher", bound_port);
+            println!("Servidor de autenticación local escuchando en http://127.0.0.1:{}/redirectLauncher y ws://", bound_port);
 
             // Timeout de 5 minutos para que el usuario complete el inicio de sesión
             let timeout_fut = tokio::time::sleep(std::time::Duration::from_secs(300));
@@ -751,11 +761,22 @@ impl AuthManager {
                 tokio::select! {
                     accept_res = listener.accept() => {
                         match accept_res {
-                            Ok((stream, _peer)) => {
+                            Ok((mut stream, _peer)) => {
                                 let tx_inner = tx_mutex.clone();
                                 tokio::spawn(async move {
-                                    match tokio_tungstenite::accept_async(stream).await {
-                                        Ok(mut ws_stream) => {
+                                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+                                    let mut peek_buf = [0u8; 2048];
+                                    let peek_n = match stream.peek(&mut peek_buf).await {
+                                        Ok(n) if n > 0 => n,
+                                        _ => return,
+                                    };
+
+                                    let peek_str = String::from_utf8_lossy(&peek_buf[..peek_n]);
+                                    let is_websocket = peek_str.to_ascii_lowercase().contains("upgrade: websocket");
+
+                                    if is_websocket {
+                                        if let Ok(mut ws_stream) = tokio_tungstenite::accept_async(stream).await {
                                             while let Some(msg_res) = ws_stream.next().await {
                                                 if let Ok(msg) = msg_res {
                                                     if msg.is_text() {
@@ -773,8 +794,47 @@ impl AuthManager {
                                                 }
                                             }
                                         }
-                                        Err(e) => {
-                                            eprintln!("Aviso en conexión WebSocket: {}", e);
+                                    } else {
+                                        // Petición HTTP directa de redirección
+                                        let mut req_buf = vec![0u8; 8192];
+                                        let read_n = match stream.read(&mut req_buf).await {
+                                            Ok(n) if n > 0 => n,
+                                            _ => return,
+                                        };
+                                        let req_str = String::from_utf8_lossy(&req_buf[..read_n]);
+
+                                        let html_body = r#"<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Mongil: Star Dive - Autenticación</title></head>
+<body style="background:#13151b;color:#e1e7ec;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+  <div style="background:#1e222d;padding:40px;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,0.5);text-align:center;max-width:440px;border:1px solid #2d3345;">
+    <h2 style="color:#00d26a;margin:0 0 12px;font-size:24px;">✓ ¡Inicio de sesión exitoso!</h2>
+    <p style="color:#8a99ad;font-size:15px;margin:0 0 20px;line-height:1.5;">Tu cuenta de Netmarble se vinculó correctamente con Stardive Launcher.</p>
+    <p style="color:#56627a;font-size:13px;margin:0;">Ya puedes cerrar esta pestaña y regresar al juego.</p>
+  </div>
+  <script>setTimeout(function(){ window.close(); }, 1500);</script>
+</body>
+</html>"#;
+
+                                        let http_response = format!(
+                                            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                            html_body.len(),
+                                            html_body
+                                        );
+
+                                        let _ = stream.write_all(http_response.as_bytes()).await;
+                                        let _ = stream.flush().await;
+
+                                        if let Some(first_line) = req_str.lines().next() {
+                                            if let Some(target) = first_line.split_whitespace().nth(1) {
+                                                println!("Petición HTTP de autenticación recibida: {}", target);
+                                                if let Ok(session) = Self::process_auth_result(target).await {
+                                                    let mut opt = tx_inner.lock().await;
+                                                    if let Some(sender) = opt.take() {
+                                                        let _ = sender.send(session);
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 });
@@ -877,5 +937,14 @@ WINE REGISTRY Version 2
         let reg = "[Software\\\\Valve\\\\Steam]\n\"Foo\"=\"Bar\"\n";
         assert_eq!(AuthManager::parse_launcher_device_key_from_reg_content(reg), None);
         assert_eq!(AuthManager::parse_nm_device_key_from_reg_content(reg), None);
+    }
+
+    #[test]
+    fn build_auth_url_incluye_web_redirect_y_soporte_token() {
+        let url = AuthManager::build_auth_url("google", 55000, "es");
+        assert!(url.contains("webViewType=web"), "Debe usar webViewType=web para redirección estándar de navegador");
+        assert!(url.contains("redirectUrl=http%3A%2F%2F127.0.0.1%3A55000%2FredirectLauncher"), "Debe tener redirectUrl a localhost");
+        assert!(url.contains("supportFeature=redirectParams%7CaccessToken"), "Debe solicitar el accessToken en redirectParams");
+        assert!(url.contains("idpType=google"), "Debe enviar idpType=google para Google SSO");
     }
 }

@@ -368,6 +368,26 @@ function setupButtons() {
     alert("URL copiada al portapapeles. Pégala en tu navegador.");
   });
 
+  const btnReopen = document.getElementById("btn-reopen-auth-url");
+  if (btnReopen) {
+    btnReopen.addEventListener("click", () => {
+      const input = document.getElementById("auth-fallback-url");
+      if (input && input.value) {
+        window.open(input.value, "_blank");
+      }
+    });
+  }
+
+  const btnWaitingManual = document.getElementById("btn-submit-waiting-manual");
+  if (btnWaitingManual) {
+    btnWaitingManual.addEventListener("click", () => {
+      const input = document.getElementById("waiting-token-input");
+      if (input && input.value.trim()) {
+        submitManualAuth(input.value.trim());
+      }
+    });
+  }
+
   // Logout Button
   document.getElementById("btn-logout").addEventListener("click", async () => {
     if (confirm("¿Estás seguro de que deseas cerrar sesión de Netmarble?")) {
@@ -438,9 +458,12 @@ async function startAuth(channel) {
   }
 }
 
-async function submitManualAuth() {
-  const inputElem = document.getElementById("manual-token-input") || document.getElementById("auth-fallback-url");
-  const input = inputElem ? inputElem.value.trim() : "";
+async function submitManualAuth(tokenOverride) {
+  let input = typeof tokenOverride === "string" ? tokenOverride.trim() : "";
+  if (!input) {
+    const inputElem = document.getElementById("waiting-token-input") || document.getElementById("manual-token-input") || document.getElementById("auth-fallback-url");
+    input = inputElem ? inputElem.value.trim() : "";
+  }
   if (!input) {
     showAuthFeedback("Por favor ingresa un token o URL de redirección válido.", "warning");
     return;

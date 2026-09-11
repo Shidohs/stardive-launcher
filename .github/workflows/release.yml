@@ -1,0 +1,125 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name for release (e.g. v1.0.2)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev build-essential
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Determine version
+        id: get_version
+        run: |
+          if [ -n "${{ github.event.inputs.tag_name }}" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION_FROM_CARGO=$(grep '^version = ' Cargo.toml | head -n1 | cut -d '"' -f2)
+            TAG="v${VERSION_FROM_CARGO}"
+          fi
+          PLAIN_VERSION="${TAG#v}"
+          echo "TAG=${TAG}" >> $GITHUB_OUTPUT
+          echo "PLAIN_VERSION=${PLAIN_VERSION}" >> $GITHUB_OUTPUT
+          echo "Building version: $TAG (plain: $PLAIN_VERSION)"
+
+      - name: Build Release Binary
+        run: |
+          cargo build --release
+          strip target/release/stardive-launcher
+
+      - name: Package tar.gz
+        run: |
+          TAG="${{ steps.get_version.outputs.TAG }}"
+          tar -czvf "stardive-launcher-${TAG}-linux-x86_64.tar.gz" -C target/release stardive-launcher
+
+      - name: Package Debian (.deb)
+        run: |
+          PLAIN_VERSION="${{ steps.get_version.outputs.PLAIN_VERSION }}"
+          STAGING="deb-pkg"
+          rm -rf "$STAGING"
+          mkdir -p "$STAGING/DEBIAN"
+          mkdir -p "$STAGING/usr/bin"
+          mkdir -p "$STAGING/usr/share/applications"
+          mkdir -p "$STAGING/usr/share/pixmaps"
+
+          cp target/release/stardive-launcher "$STAGING/usr/bin/stardive-launcher"
+          chmod 755 "$STAGING/usr/bin/stardive-launcher"
+
+          if [ -f assets/icon.png ]; then
+            cp assets/icon.png "$STAGING/usr/share/pixmaps/stardive-launcher.png"
+          elif [ -f icons/icon.png ]; then
+            cp icons/icon.png "$STAGING/usr/share/pixmaps/stardive-launcher.png"
+          fi
+
+          cat << 'EOF' > "$STAGING/usr/share/applications/stardive-launcher.desktop"
+[Desktop Entry]
+Name=Mongil: Star Dive Launcher
+Comment=Native Linux Launcher & Downloader for Mongil: Star Dive
+Exec=/usr/bin/stardive-launcher
+Icon=stardive-launcher
+Terminal=false
+Type=Application
+Categories=Game;
+Keywords=mongil;star;dive;stardive;netmarble;gacha;
+EOF
+
+          cat << EOF > "$STAGING/DEBIAN/control"
+Package: stardive-launcher
+Version: ${PLAIN_VERSION}
+Section: games
+Priority: optional
+Architecture: amd64
+Maintainer: Shidox <https://github.com/Shidohs>
+Description: Native Linux Launcher & Downloader for Mongil: Star Dive
+ Stardive Launcher is an optimized native Linux launcher and downloader
+ for Mongil: Star Dive with Netmarble SSO authentication, GE-Proton integration,
+ and performance optimizations.
+EOF
+
+          dpkg-deb --build "$STAGING" "stardive-launcher_${PLAIN_VERSION}_amd64.deb"
+
+      - name: Upload Release Assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.get_version.outputs.TAG }}
+          PLAIN_VERSION: ${{ steps.get_version.outputs.PLAIN_VERSION }}
+        run: |
+          DEB_FILE="stardive-launcher_${PLAIN_VERSION}_amd64.deb"
+          TAR_FILE="stardive-launcher-${TAG}-linux-x86_64.tar.gz"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists, uploading assets..."
+            gh release upload "$TAG" "$DEB_FILE" "$TAR_FILE" --clobber
+          else
+            echo "Creating release $TAG..."
+            gh release create "$TAG" "$DEB_FILE" "$TAR_FILE" \
+              --title "$TAG" \
+              --generate-notes
+          fi

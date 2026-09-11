@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 const NM_API_BASE: &str = "https://apis.netmarble.com/cpplauncher/api/external";
+#[allow(dead_code)]
 pub const NM_MEMBERS_AUTH_URL: &str = "https://members.netmarble.com/auth";
 pub const NM_CLIENT_ID: &str = "mq5RG0PGw6ipw35A";
 const NM_LAUNCHER_CH: &str = "ypWjRL2aNi";
@@ -66,6 +67,7 @@ pub struct NetmarbleUserData {
     pub accessed_channel_code: Option<u32>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelPayload {
     pub channel: String,
@@ -127,6 +129,7 @@ impl AuthManager {
     /// `{"deviceKey": <uuid-del-launcher>, "nmDeviceKey": <md5-del-sdk>}` → HTTP 200.
     ///
     /// Descubierto empíricamente contra la API real de Netmarble (2026-09-11).
+    #[allow(dead_code)]
     pub fn read_nm_device_key_from_wine_registry() -> Option<String> {
         Self::for_each_user_reg(Self::parse_nm_device_key_from_reg_content)
     }
@@ -338,6 +341,7 @@ impl AuthManager {
     ///
     /// Si `nmDeviceKey` falta o está mal, el servidor responde `1210 invalid device key`
     /// aunque el resto del body sea correcto. Descubierto empíricamente (2026-09-11).
+    #[allow(dead_code)]
     pub async fn exchange_channel_token(
         payload: &ChannelPayload,
         device_key: &str,
@@ -622,6 +626,7 @@ impl AuthManager {
     }
 
     /// Permite procesar directamente un token de lanzador ya emitido o pegado manualmente
+    #[allow(dead_code)]
     pub async fn direct_token_login(launcher_token: &str) -> Result<AuthSession> {
         Self::process_auth_result(launcher_token).await
     }

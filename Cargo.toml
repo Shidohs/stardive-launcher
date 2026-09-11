@@ -1,6 +1,6 @@
 [package]
 name = "stardive-launcher"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 authors = ["Shidox"]
 description = "Native Linux Launcher & Downloader for Mongil: Star Dive"
@@ -18,6 +18,10 @@ hex = "0.4"
 dirs = "5.0"
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+tokio-tungstenite = "0.30.0"
+futures-util = "0.3.34"
+uuid = { version = "1.26.1", features = ["v4"] }
+data-encoding = "2.11.1"
 
 [build-dependencies]
 tauri-build = "2"

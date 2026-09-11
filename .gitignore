@@ -12,6 +12,7 @@ launcher_game.log
 *.tmp
 *.bak
 
-# OS
-.DS_Store
-Thumbs.db
+# Packages
+*.deb
+*.tar.gz
+

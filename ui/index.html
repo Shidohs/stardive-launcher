@@ -42,6 +42,19 @@
       </div>
 
       <div class="header-right">
+        <!-- Auth Profile / Login Button -->
+        <button class="m3-auth-btn" id="btn-header-auth" title="Iniciar Sesión en Netmarble">
+          <svg viewBox="0 0 24 24" class="svg-icon"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+          <span id="header-auth-label">Iniciar Sesión</span>
+        </button>
+
+        <div class="m3-profile-chip" id="chip-header-profile" style="display: none;" title="Ver perfil de jugador">
+          <div class="profile-avatar-wrapper">
+            <img id="header-user-avatar" src="assets/icon.png" alt="Avatar" class="profile-avatar" onerror="this.src='assets/icon.png'">
+          </div>
+          <span id="header-user-name" class="profile-name">Piloto</span>
+        </div>
+
         <!-- Coupon Button -->
         <button class="m3-icon-btn" id="btn-coupon" title="Canjear Códigos y Cupones Promocionales">
           <svg viewBox="0 0 24 24" class="svg-icon"><path d="M20 12v8H4v-8H2V6h5.08c-.05-.33-.08-.66-.08-1a4 4 0 0 1 4-4c1.17 0 2.22.5 2.95 1.3.73-.8 1.78-1.3 2.95-1.3a4 4 0 0 1 4 4c0 .34-.03.67-.08 1H22v6h-2zM11 6h-1a2 2 0 1 0 0 4h1V6zm4 4a2 2 0 1 0 0-4h-1v4h1zm-4 4H6v6h5v-6zm2 6h5v-6h-5v6z"/></svg>
@@ -327,6 +340,117 @@
         <button class="m3-btn-secondary" id="btn-refresh-logs">Refrescar</button>
         <button class="m3-btn-secondary" id="btn-clear-logs">Limpiar</button>
         <button class="m3-btn-primary" id="btn-close-logs-footer">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Netmarble SSO Auth Modal (Official V5 Experience) -->
+  <div class="modal-backdrop" id="modal-auth" style="display: none;">
+    <div class="m3-dialog auth-dialog">
+      <!-- Netmarble Brand Banner Top -->
+      <div class="auth-dialog-top">
+        <img src="https://sgimage.netmarble.com/images/netmarble/COMMON/20231130/dark_branding_top.png" alt="Netmarble" class="auth-brand-img" onerror="this.style.display='none'">
+        <button class="close-btn auth-close-btn" id="close-auth">&times;</button>
+      </div>
+
+      <!-- State 1: Provider Selection -->
+      <div class="auth-dialog-body" id="auth-select-view">
+        <h3 class="auth-title">Iniciar sesión</h3>
+        <p class="auth-subtitle">Selecciona tu método de acceso oficial para jugar:</p>
+
+        <div class="auth-providers-list">
+          <!-- Google SSO -->
+          <button class="auth-provider-btn btn-google" id="btn-login-google">
+            <svg class="provider-svg" viewBox="0 0 24 24">
+              <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+              <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+              <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+              <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+            </svg>
+            <span>Continuar con Google</span>
+          </button>
+
+          <!-- Netmarble Email SSO -->
+          <button class="auth-provider-btn btn-email" id="btn-login-email">
+            <svg class="provider-svg" viewBox="0 0 24 24">
+              <path fill="#00D26A" d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+            </svg>
+            <span>Continuar con Correo Netmarble</span>
+          </button>
+
+          <!-- Apple SSO -->
+          <button class="auth-provider-btn btn-apple" id="btn-login-apple">
+            <svg class="provider-svg" viewBox="0 0 24 24">
+              <path fill="#ffffff" d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.37c.62-.75 1.04-1.8 0.93-2.87-.9.04-1.99.6-2.63 1.35-.57.65-1.06 1.73-.93 2.76 1 .08 2.02-.5 2.63-1.24z"/>
+            </svg>
+            <span>Continuar con Apple</span>
+          </button>
+        </div>
+
+        <div class="auth-options-row">
+          <label class="remember-label">
+            <input type="checkbox" id="chk-remember-login" checked>
+            <span>Mantener sesión iniciada</span>
+          </label>
+        </div>
+
+        <!-- Manual Token Fallback Collapsible -->
+        <div class="auth-manual-section">
+          <button class="btn-toggle-manual" id="btn-toggle-manual">
+            <span>¿En servidor remoto / Sin navegador? Entrada manual</span>
+            <svg viewBox="0 0 24 24" class="svg-chevron"><path d="M7 10l5 5 5-5z"/></svg>
+          </button>
+          <div class="manual-input-box" id="manual-input-box" style="display: none;">
+            <input type="text" id="manual-token-input" class="m3-input" placeholder="Pega aquí el launcherToken JWT o JSON">
+            <button class="m3-btn-secondary" id="btn-submit-manual">Iniciar Sesión Manual</button>
+          </div>
+        </div>
+
+        <div class="auth-feedback" id="auth-feedback" style="display: none;"></div>
+      </div>
+
+      <!-- State 2: Waiting for Browser SSO Callback -->
+      <div class="auth-dialog-body" id="auth-waiting-view" style="display: none;">
+        <div class="auth-spinner-wrapper">
+          <div class="m3-spinner"></div>
+        </div>
+        <h3 class="auth-waiting-title">Esperando confirmación...</h3>
+        <p class="auth-waiting-desc">
+          Se ha abierto la página oficial de Netmarble en tu navegador.<br>
+          Completa el inicio de sesión para continuar automáticamente.
+        </p>
+        <div class="auth-waiting-url-box" id="auth-url-box" style="display: none;">
+          <input type="text" id="auth-fallback-url" class="m3-input" readonly>
+          <button class="m3-btn-secondary" id="btn-copy-auth-url">Copiar URL</button>
+        </div>
+        <button class="m3-btn-text" id="btn-cancel-auth" style="margin-top: 16px;">Cancelar / Elegir otro método</button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- User Account Popover / Dialog -->
+  <div class="modal-backdrop" id="modal-account" style="display: none;">
+    <div class="m3-dialog dialog-sm">
+      <div class="dialog-header">
+        <h3 class="dialog-title">Cuenta de Netmarble</h3>
+        <button class="close-btn" id="close-account">&times;</button>
+      </div>
+      <div class="dialog-body">
+        <div class="account-card">
+          <div class="account-avatar-large">
+            <img id="account-avatar" src="assets/icon.png" alt="Avatar" onerror="this.src='assets/icon.png'">
+          </div>
+          <div class="account-info-group">
+            <h4 class="account-name" id="account-name">Piloto</h4>
+            <p class="account-id" id="account-id">ID: --</p>
+            <span class="account-badge" id="account-channel">Netmarble SSO V5</span>
+          </div>
+        </div>
+      </div>
+      <div class="dialog-footer">
+        <button class="m3-btn-text" id="btn-close-account">Cerrar</button>
+        <button class="m3-btn-secondary" id="btn-logout" style="color: #ff5252; border-color: rgba(255,82,82,0.4);">Cerrar Sesión</button>
       </div>
     </div>
   </div>

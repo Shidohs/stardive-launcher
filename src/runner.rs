@@ -73,8 +73,43 @@ impl GameRunner {
             c
         };
 
+        // Netmarble Official SSO Authentication Token Injection
+        let mut has_nmauth = false;
+        if let Ok(Some(session)) = crate::auth::AuthManager::load_session() {
+            println!(
+                "Inyectando token de sesión oficial de Netmarble: {} (Player ID: {})",
+                session.profile_name, session.player_id
+            );
+            // Sincronizar clave de dispositivo oficial en el registro de Wine (HKCU\Software\Netmarble\NetmarbleSDK)
+            ensure_wine_registry_device_key(prefix_dir, &session.device_key);
+
+            // Inyectar argumentos en formato estándar y con guion (-NMAUTH) para Unreal Engine / NetmarbleSDK
+            cmd.arg("NMAUTH_TYPE=nmlauncher");
+            cmd.arg("-NMAUTH_TYPE=nmlauncher");
+            cmd.arg(format!("NMAUTH_TOKEN={}", session.launcher_token));
+            cmd.arg(format!("-NMAUTH_TOKEN={}", session.launcher_token));
+
+            // Variables de entorno de Wine por si el SDK las consulta vía GetEnvironmentVariableW
+            cmd.env("NMAUTH_TYPE", "nmlauncher");
+            cmd.env("NMAUTH_TOKEN", &session.launcher_token);
+            cmd.env("NMDeviceKey", &session.device_key);
+            cmd.env("DEVICE_KEY", &session.device_key);
+            cmd.env("NMENV", "nmp");
+            has_nmauth = true;
+        } else {
+            eprintln!("ADVERTENCIA: No se detectó sesión iniciada en Netmarble. STARDIVE.exe solicitará inicio de sesión.");
+        }
+
+        let mut has_nmenv = false;
         // Add launch arguments (e.g. "NMENV=nmp") or detect prefixed env vars
         for arg in config.launch_args.split_whitespace() {
+            if arg.starts_with("NMENV=") || arg.starts_with("-NMENV=") {
+                has_nmenv = true;
+            }
+            if (arg.starts_with("NMAUTH_TYPE=") || arg.starts_with("NMAUTH_TOKEN=") || arg.starts_with("-NMAUTH_TYPE=") || arg.starts_with("-NMAUTH_TOKEN=")) && has_nmauth {
+                // Ya inyectado dinámicamente desde auth.json
+                continue;
+            }
             if let Some((k, v)) = arg.split_once('=') {
                 let k_upper = k.to_uppercase();
                 if k_upper.starts_with("PROTON_")
@@ -92,6 +127,11 @@ impl GameRunner {
                 }
             }
             cmd.arg(arg);
+        }
+
+        if !has_nmenv {
+            cmd.arg("NMENV=nmp");
+            cmd.arg("-NMENV=nmp");
         }
 
         // Set working directory to the game root
@@ -196,3 +236,59 @@ impl GameRunner {
         }
     }
 }
+
+/// Sincroniza la clave NMDeviceKey en el registro de Wine (HKCU\Software\Netmarble\NetmarbleSDK)
+/// Requerida por Unreal Engine y NetmarbleSDK para validar el token JWT oficial
+fn ensure_wine_registry_device_key(prefix_dir: &std::path::Path, device_key: &str) {
+    let user_reg = prefix_dir.join("user.reg");
+    if !user_reg.exists() {
+        return;
+    }
+
+    if let Ok(mut content) = std::fs::read_to_string(&user_reg) {
+        let section_header = "[Software\\\\Netmarble\\\\NetmarbleSDK]";
+        let entry = format!("\"NMDeviceKey\"=\"{}\"", device_key);
+
+        if content.contains(section_header) {
+            if content.contains(&entry) {
+                return; // Ya está actualizada
+            }
+            if let Some(sec_idx) = content.find(section_header) {
+                let rest = &content[sec_idx..];
+                if let Some(next_sec) = rest[section_header.len()..].find("\n[") {
+                    let sec_end = sec_idx + section_header.len() + next_sec;
+                    let sec_content = &content[sec_idx..sec_end];
+                    if sec_content.contains("\"NMDeviceKey\"=") {
+                        let lines: Vec<String> = sec_content
+                            .lines()
+                            .map(|l| {
+                                if l.starts_with("\"NMDeviceKey\"=") {
+                                    entry.clone()
+                                } else {
+                                    l.to_string()
+                                }
+                            })
+                            .collect();
+                        content.replace_range(sec_idx..sec_end, &lines.join("\n"));
+                    } else {
+                        content.insert_str(sec_idx + section_header.len() + 1, &format!("{}\n", entry));
+                    }
+                } else {
+                    content.push_str(&format!("\n{}\n", entry));
+                }
+            }
+        } else {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(1789048653);
+            content.push_str(&format!(
+                "\n{} {}\n#time=1db000000000000\n{}\n",
+                section_header, ts, entry
+            ));
+        }
+
+        let _ = std::fs::write(&user_reg, content);
+    }
+}
+

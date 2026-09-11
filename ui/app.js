@@ -1,7 +1,32 @@
-// Stardive Launcher - Frontend Controller
+// Dynamic resolution for Tauri 2 & 1 global IPC
+function getTauriInvoke() {
+  if (window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === 'function') {
+    return window.__TAURI__.core.invoke;
+  }
+  if (window.__TAURI__ && typeof window.__TAURI__.invoke === 'function') {
+    return window.__TAURI__.invoke;
+  }
+  if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
+    return window.__TAURI_INTERNALS__.invoke;
+  }
+  return async (cmd, args) => {
+    console.warn(`[Tauri Mock] invoke called: ${cmd}`, args);
+    return null;
+  };
+}
 
-const { invoke } = window.__TAURI__ ? window.__TAURI__ : { invoke: async () => {} };
-const { listen } = window.__TAURI__ ? window.__TAURI__.event : { listen: async () => {} };
+function getTauriListen() {
+  if (window.__TAURI__ && window.__TAURI__.event && typeof window.__TAURI__.event.listen === 'function') {
+    return window.__TAURI__.event.listen;
+  }
+  if (window.__TAURI__ && typeof window.__TAURI__.listen === 'function') {
+    return window.__TAURI__.listen;
+  }
+  return () => () => {};
+}
+
+const invoke = (...args) => getTauriInvoke()(...args);
+const listen = (...args) => getTauriListen()(...args);
 
 let currentStatus = {
   is_installed: false,
@@ -11,6 +36,9 @@ let currentStatus = {
   has_gamemode: true,
   is_downloading: false,
   is_playing: false,
+  is_authenticated: false,
+  player_name: "",
+  profile_img_url: "",
 };
 
 let currentConfig = null;
@@ -44,6 +72,24 @@ function updateUI() {
   document.getElementById("runner-text").textContent = currentStatus.runner_name || "GE-Proton";
   document.getElementById("gamemode-text").textContent = currentStatus.has_gamemode ? "GameMode ON" : "GameMode OFF";
 
+  // Update Auth Profile & Header
+  const btnHeaderAuth = document.getElementById("btn-header-auth");
+  const chipHeaderProfile = document.getElementById("chip-header-profile");
+  const headerUserName = document.getElementById("header-user-name");
+  const headerUserAvatar = document.getElementById("header-user-avatar");
+
+  if (currentStatus.is_authenticated) {
+    if (btnHeaderAuth) btnHeaderAuth.style.display = "none";
+    if (chipHeaderProfile) chipHeaderProfile.style.display = "flex";
+    if (headerUserName) headerUserName.textContent = currentStatus.player_name || "Piloto";
+    if (headerUserAvatar && currentStatus.profile_img_url) {
+      headerUserAvatar.src = currentStatus.profile_img_url;
+    }
+  } else {
+    if (btnHeaderAuth) btnHeaderAuth.style.display = "flex";
+    if (chipHeaderProfile) chipHeaderProfile.style.display = "none";
+  }
+
   const heroBtn = document.getElementById("btn-hero-action");
   const ctaSvg = document.getElementById("cta-svg");
   const ctaTitle = document.getElementById("cta-title");
@@ -71,12 +117,19 @@ function updateUI() {
     ctaSubtitle.textContent = "838 MB • Descarga Directa CDN";
     statusText.textContent = "Cliente no instalado (Descarga: 838 MB)";
     progressContainer.style.display = "none";
+  } else if (!currentStatus.is_authenticated) {
+    heroBtn.className = "hero-cta-btn btn-play";
+    ctaSvg.innerHTML = '<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>';
+    ctaTitle.textContent = "INICIAR SESIÓN";
+    ctaSubtitle.textContent = "Netmarble SSO V5 requerido";
+    statusText.textContent = "Inicia sesión con Google o Netmarble para jugar";
+    progressContainer.style.display = "none";
   } else {
     heroBtn.className = "hero-cta-btn btn-play";
     ctaSvg.innerHTML = '<path d="M8 5v14l11-7z"/>';
     ctaTitle.textContent = "INICIAR JUEGO";
-    ctaSubtitle.textContent = "GE-Proton • DXVK Async";
-    statusText.textContent = "Cliente detectado (Listo para jugar)";
+    ctaSubtitle.textContent = "GE-Proton • Sesión Netmarble Activa";
+    statusText.textContent = `Sesión iniciada: ${currentStatus.player_name || "Piloto"} (Listo para jugar)`;
     progressContainer.style.display = "none";
   }
 }
@@ -116,6 +169,19 @@ function setupTauriListeners() {
     const state = event.payload;
     currentStatus.is_playing = state.is_running;
     updateUI();
+  });
+
+  // Netmarble Authentication Status Change
+  listen("auth-status-changed", async (event) => {
+    const data = event.payload;
+    if (data && data.success) {
+      closeAuthModal();
+      await refreshStatus();
+    } else if (data && !data.success) {
+      document.getElementById("auth-select-view").style.display = "block";
+      document.getElementById("auth-waiting-view").style.display = "none";
+      showAuthFeedback("Error al autenticar: " + (data.error || "Desconocido"), "error");
+    }
   });
 }
 
@@ -186,6 +252,9 @@ function setupButtons() {
       currentStatus.is_downloading = true;
       updateUI();
       await invoke("start_download");
+    } else if (!currentStatus.is_authenticated) {
+      openAuthModal();
+      showAuthFeedback("Debes iniciar sesión con tu cuenta de Netmarble/Google para jugar.", "warning");
     } else {
       currentStatus.is_playing = true;
       updateUI();
@@ -257,6 +326,127 @@ function setupButtons() {
     await invoke("clear_logs");
     document.getElementById("log-content").textContent = "";
   });
+
+  // Netmarble SSO Auth Buttons
+  const btnHeaderAuth = document.getElementById("btn-header-auth");
+  if (btnHeaderAuth) {
+    btnHeaderAuth.addEventListener("click", openAuthModal);
+  }
+
+  const chipHeaderProfile = document.getElementById("chip-header-profile");
+  if (chipHeaderProfile) {
+    chipHeaderProfile.addEventListener("click", openAccountModal);
+  }
+
+  document.getElementById("close-auth").addEventListener("click", closeAuthModal);
+  document.getElementById("close-account").addEventListener("click", closeAccountModal);
+  document.getElementById("btn-close-account").addEventListener("click", closeAccountModal);
+
+  // Providers
+  document.getElementById("btn-login-google").addEventListener("click", () => startAuth("google"));
+  document.getElementById("btn-login-email").addEventListener("click", () => startAuth("email"));
+  document.getElementById("btn-login-apple").addEventListener("click", () => startAuth("apple"));
+
+  document.getElementById("btn-cancel-auth").addEventListener("click", () => {
+    document.getElementById("auth-select-view").style.display = "block";
+    document.getElementById("auth-waiting-view").style.display = "none";
+  });
+
+  // Manual fallback toggle
+  document.getElementById("btn-toggle-manual").addEventListener("click", () => {
+    const box = document.getElementById("manual-input-box");
+    box.style.display = box.style.display === "none" ? "flex" : "none";
+  });
+
+  document.getElementById("btn-submit-manual").addEventListener("click", submitManualAuth);
+
+  // Copy Auth URL
+  document.getElementById("btn-copy-auth-url").addEventListener("click", () => {
+    const input = document.getElementById("auth-fallback-url");
+    input.select();
+    navigator.clipboard.writeText(input.value);
+    alert("URL copiada al portapapeles. Pégala en tu navegador.");
+  });
+
+  // Logout Button
+  document.getElementById("btn-logout").addEventListener("click", async () => {
+    if (confirm("¿Estás seguro de que deseas cerrar sesión de Netmarble?")) {
+      await invoke("logout");
+      closeAccountModal();
+      await refreshStatus();
+    }
+  });
+}
+
+// ------------------------------------------------------------
+// AUTHENTICATION CONTROLLER HELPERS
+// ------------------------------------------------------------
+
+function openAuthModal() {
+  document.getElementById("modal-auth").style.display = "flex";
+  document.getElementById("auth-select-view").style.display = "block";
+  document.getElementById("auth-waiting-view").style.display = "none";
+  document.getElementById("auth-feedback").style.display = "none";
+}
+
+function closeAuthModal() {
+  document.getElementById("modal-auth").style.display = "none";
+}
+
+function openAccountModal() {
+  document.getElementById("account-name").textContent = currentStatus.player_name || "Piloto";
+  document.getElementById("account-id").textContent = currentStatus.player_id
+    ? `ID: ${currentStatus.player_id}`
+    : "Sesión activa";
+  if (currentStatus.profile_img_url) {
+    document.getElementById("account-avatar").src = currentStatus.profile_img_url;
+  }
+  document.getElementById("modal-account").style.display = "flex";
+}
+
+function closeAccountModal() {
+  document.getElementById("modal-account").style.display = "none";
+}
+
+function showAuthFeedback(msg, type = "info") {
+  const fb = document.getElementById("auth-feedback");
+  fb.textContent = msg;
+  fb.className = `auth-feedback feedback-${type}`;
+  fb.style.display = "block";
+}
+
+async function startAuth(channel) {
+  try {
+    document.getElementById("auth-select-view").style.display = "none";
+    document.getElementById("auth-waiting-view").style.display = "block";
+
+    const authUrl = await invoke("start_auth_flow", { channel });
+    if (authUrl) {
+      document.getElementById("auth-fallback-url").value = authUrl;
+      document.getElementById("auth-url-box").style.display = "flex";
+    }
+  } catch (err) {
+    document.getElementById("auth-select-view").style.display = "block";
+    document.getElementById("auth-waiting-view").style.display = "none";
+    showAuthFeedback("Error al iniciar SSO: " + err, "error");
+  }
+}
+
+async function submitManualAuth() {
+  const input = document.getElementById("manual-token-input").value.trim();
+  if (!input) {
+    showAuthFeedback("Por favor ingresa un token válido.", "warning");
+    return;
+  }
+  try {
+    const status = await invoke("manual_auth", { input });
+    if (status) {
+      closeAuthModal();
+      await refreshStatus();
+    }
+  } catch (err) {
+    showAuthFeedback("Error de autenticación: " + err, "error");
+  }
 }
 
 // Refresh execution logs

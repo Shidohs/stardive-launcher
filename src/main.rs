@@ -1,4 +1,5 @@
 mod api;
+mod auth;
 mod config;
 mod downloader;
 mod installer;
@@ -67,6 +68,9 @@ pub struct LauncherStatusPayload {
     pub has_gamemode: bool,
     pub is_downloading: bool,
     pub is_playing: bool,
+    pub is_authenticated: bool,
+    pub player_name: String,
+    pub profile_img_url: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -115,6 +119,7 @@ async fn get_launcher_status(
 
     let has_gamemode = tweaks::SystemTweaks::has_gamemode();
     let is_playing = runner::GameRunner::is_running(&mut *state.game_process.lock().unwrap());
+    let auth_status = auth::AuthManager::get_status();
 
     Ok(LauncherStatusPayload {
         is_installed,
@@ -124,6 +129,9 @@ async fn get_launcher_status(
         has_gamemode,
         is_downloading: false,
         is_playing,
+        is_authenticated: auth_status.is_logged_in,
+        player_name: auth_status.profile_name,
+        profile_img_url: auth_status.profile_img_url,
     })
 }
 
@@ -332,6 +340,122 @@ fn clear_logs() -> Result<(), String> {
     std::fs::write(config.log_file_path(), "").map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn get_auth_state() -> Result<auth::AuthStatusPayload, String> {
+    Ok(auth::AuthManager::get_status())
+}
+
+#[tauri::command]
+async fn start_auth_flow(
+    app_handle: tauri::AppHandle,
+    channel: String,
+) -> Result<String, String> {
+    let (port, rx) = auth::AuthManager::listen_for_auth_callback(55000)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let auth_url = auth::AuthManager::build_auth_url(&channel, port, "es");
+    println!("Abriendo Netmarble SSO en navegador: {}", auth_url);
+
+    let _ = std::process::Command::new("xdg-open").arg(&auth_url).spawn();
+
+    let app_handle_clone = app_handle.clone();
+    let device_key = auth::AuthManager::get_or_create_device_key();
+
+    tokio::spawn(async move {
+        match rx.await {
+            Ok(payload) => {
+                println!("Callback de canal recibido: {}", payload.channel);
+                match auth::AuthManager::exchange_channel_token(&payload, &device_key).await {
+                    Ok(session) => {
+                        let status = auth::AuthManager::get_status();
+                        let _ = app_handle_clone.emit(
+                            "auth-status-changed",
+                            serde_json::json!({
+                                "success": true,
+                                "status": status,
+                                "profile_name": session.profile_name
+                            }),
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("Error al canjear token con Netmarble: {}", e);
+                        let _ = app_handle_clone.emit(
+                            "auth-status-changed",
+                            serde_json::json!({
+                                "success": false,
+                                "error": e.to_string()
+                            }),
+                        );
+                    }
+                }
+            }
+            Err(_) => {
+                eprintln!("Listener de autenticación cerrado.");
+                let _ = app_handle_clone.emit(
+                    "auth-status-changed",
+                    serde_json::json!({
+                        "success": false,
+                        "error": "Cancelado o timeout superado."
+                    }),
+                );
+            }
+        }
+    });
+
+    Ok(auth_url)
+}
+
+#[tauri::command]
+async fn manual_auth(
+    app_handle: tauri::AppHandle,
+    input: String,
+) -> Result<auth::AuthStatusPayload, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err("El token o payload no puede estar vacío.".to_string());
+    }
+
+    let device_key = auth::AuthManager::get_or_create_device_key();
+
+    let session = if trimmed.starts_with('{') {
+        let payload: auth::ChannelPayload = serde_json::from_str(trimmed)
+            .map_err(|e| format!("Formato JSON no válido: {}", e))?;
+        auth::AuthManager::exchange_channel_token(&payload, &device_key)
+            .await
+            .map_err(|e| e.to_string())?
+    } else {
+        auth::AuthManager::direct_token_login(trimmed)
+            .await
+            .map_err(|e| e.to_string())?
+    };
+
+    let status = auth::AuthManager::get_status();
+    let _ = app_handle.emit(
+        "auth-status-changed",
+        serde_json::json!({
+            "success": true,
+            "status": status,
+            "profile_name": session.profile_name
+        }),
+    );
+
+    Ok(status)
+}
+
+#[tauri::command]
+fn logout(app_handle: tauri::AppHandle) -> Result<(), String> {
+    auth::AuthManager::clear_session().map_err(|e| e.to_string())?;
+    let _ = app_handle.emit(
+        "auth-status-changed",
+        serde_json::json!({
+            "success": true,
+            "status": auth::AuthStatusPayload::default()
+        }),
+    );
+    Ok(())
+}
+
 // ------------------------------------------------------------
 // MAIN ENTRY POINT (CLI & GUI)
 // ------------------------------------------------------------
@@ -379,6 +503,10 @@ fn main() -> Result<()> {
             open_external,
             get_logs,
             clear_logs,
+            get_auth_state,
+            start_auth_flow,
+            manual_auth,
+            logout,
         ])
         .run(tauri::generate_context!())
         .expect("Error al iniciar Tauri GUI");

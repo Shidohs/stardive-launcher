@@ -177,7 +177,11 @@ impl AuthManager {
     /// primera clave de `keys` que tenga valor no vacío. Devuelve ese valor.
     ///
     /// No "sangra" a la sección siguiente: recorta el bloque hasta el próximo `\n[`.
-    fn find_value_in_reg_section(content: &str, sections: &[&str], keys: &[&str]) -> Option<String> {
+    fn find_value_in_reg_section(
+        content: &str,
+        sections: &[&str],
+        keys: &[&str],
+    ) -> Option<String> {
         for section in sections {
             let Some(sec_idx) = content.find(section) else {
                 continue;
@@ -221,7 +225,11 @@ impl AuthManager {
         let prefix = fs::read_to_string(&cfg_path)
             .ok()
             .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.get("prefix_dir").and_then(|p| p.as_str()).map(PathBuf::from));
+            .and_then(|v| {
+                v.get("prefix_dir")
+                    .and_then(|p| p.as_str())
+                    .map(PathBuf::from)
+            });
 
         let mut candidates: Vec<PathBuf> = Vec::new();
         if let Some(p) = prefix {
@@ -289,7 +297,9 @@ impl AuthManager {
             Ok(session) => {
                 let now = chrono::Utc::now().timestamp();
                 if session.expires_at > 0 && session.expires_at < now {
-                    eprintln!("Sesión de Netmarble expirada. Se requiere iniciar sesión nuevamente.");
+                    eprintln!(
+                        "Sesión de Netmarble expirada. Se requiere iniciar sesión nuevamente."
+                    );
                     let _ = fs::remove_file(&path);
                     return Ok(None);
                 }
@@ -410,7 +420,10 @@ impl AuthManager {
             other => return Err(anyhow!("Canal de autenticación desconocido: {}", other)),
         };
 
-        println!("Canjeando token con Netmarble Auth (Canal: {})...", payload.channel);
+        println!(
+            "Canjeando token con Netmarble Auth (Canal: {})...",
+            payload.channel
+        );
 
         let resp = client
             .post(&url)
@@ -431,11 +444,7 @@ impl AuthManager {
         let text = resp.text().await.context("Fallo al leer respuesta HTTP")?;
 
         if !status.is_success() {
-            return Err(anyhow!(
-                "Netmarble API devolvió HTTP {}: {}",
-                status,
-                text
-            ));
+            return Err(anyhow!("Netmarble API devolvió HTTP {}: {}", status, text));
         }
 
         let api_resp: NetmarbleApiResponse<String> = serde_json::from_str(&text)
@@ -445,7 +454,9 @@ impl AuthManager {
             return Err(anyhow!(
                 "Error de Netmarble Auth (Código {}): {}",
                 api_resp.code,
-                api_resp.msg.unwrap_or_else(|| "Error desconocido".to_string())
+                api_resp
+                    .msg
+                    .unwrap_or_else(|| "Error desconocido".to_string())
             ));
         }
 
@@ -457,7 +468,9 @@ impl AuthManager {
         let (player_id, expires_at) = Self::decode_jwt_claims(&launcher_token);
 
         // Consultar el perfil del jugador
-        let profile = Self::fetch_game_profile(&client, &launcher_token).await.ok();
+        let profile = Self::fetch_game_profile(&client, &launcher_token)
+            .await
+            .ok();
         let profile_name = profile
             .as_ref()
             .and_then(|p| p.profile_name.clone())
@@ -487,7 +500,10 @@ impl AuthManager {
         };
 
         Self::save_session(&session)?;
-        println!("✓ ¡Sesión oficial de Netmarble guardada con éxito para {}!", session.profile_name);
+        println!(
+            "✓ ¡Sesión oficial de Netmarble guardada con éxito para {}!",
+            session.profile_name
+        );
 
         Ok(session)
     }
@@ -504,20 +520,23 @@ impl AuthManager {
         // Caso 1: JSON payload
         if trimmed.starts_with('{') {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                if let Some(t) = val.get("accessToken")
+                if let Some(t) = val
+                    .get("accessToken")
                     .or_else(|| val.get("access_token"))
                     .or_else(|| val.get("launcher_token"))
                     .and_then(|v| v.as_str())
                 {
                     access_token = t.to_string();
                 }
-                if let Some(r) = val.get("refreshToken")
+                if let Some(r) = val
+                    .get("refreshToken")
                     .or_else(|| val.get("refresh_token"))
                     .and_then(|v| v.as_str())
                 {
                     refresh_token = Some(r.to_string());
                 }
-                if let Some(nid) = val.get("netmarbleId")
+                if let Some(nid) = val
+                    .get("netmarbleId")
                     .or_else(|| val.get("netmarble_id"))
                     .and_then(|v| v.as_str())
                 {
@@ -530,7 +549,9 @@ impl AuthManager {
         if access_token.is_empty() {
             let qs = if let Some(pos) = trimmed.find('?') {
                 &trimmed[pos + 1..]
-            } else if trimmed.contains('=') && (trimmed.contains("accessToken") || trimmed.contains("access_token")) {
+            } else if trimmed.contains('=')
+                && (trimmed.contains("accessToken") || trimmed.contains("access_token"))
+            {
                 trimmed
             } else {
                 ""
@@ -543,9 +564,14 @@ impl AuthManager {
                     if let Some((k, v)) = pair.split_once('=') {
                         let clean_v = v.split('#').next().unwrap_or(v);
                         match k {
-                            "accessToken" | "access_token" | "launcher_token" | "launcherToken" | "token" => access_token = clean_v.to_string(),
-                            "refreshToken" | "refresh_token" => refresh_token = Some(clean_v.to_string()),
-                            "netmarbleId" | "netmarble_id" => netmarble_id = Some(clean_v.to_string()),
+                            "accessToken" | "access_token" | "launcher_token" | "launcherToken"
+                            | "token" => access_token = clean_v.to_string(),
+                            "refreshToken" | "refresh_token" => {
+                                refresh_token = Some(clean_v.to_string())
+                            }
+                            "netmarbleId" | "netmarble_id" => {
+                                netmarble_id = Some(clean_v.to_string())
+                            }
                             _ => {}
                         }
                     }
@@ -568,11 +594,15 @@ impl AuthManager {
         }
 
         if access_token.is_empty() || access_token.starts_with('/') || access_token.len() < 20 {
-            return Err(anyhow!("No se pudo extraer un token de acceso válido de Netmarble."));
+            return Err(anyhow!(
+                "No se pudo extraer un token de acceso válido de Netmarble."
+            ));
         }
 
         // Consultar usuario real de Netmarble Members (netmarble-auth/user)
-        let user_data = Self::fetch_netmarble_user(&client, &access_token).await.ok();
+        let user_data = Self::fetch_netmarble_user(&client, &access_token)
+            .await
+            .ok();
 
         // Consultar perfil de juego si existe personaje creado en monster2
         let game_profile = Self::fetch_game_profile(&client, &access_token).await.ok();
@@ -585,11 +615,24 @@ impl AuthManager {
             .as_ref()
             .and_then(|p| p.profile_name.clone())
             .filter(|s| !s.trim().is_empty())
-            .or_else(|| user_data.as_ref().and_then(|u| u.nickname.clone()).filter(|s| !s.trim().is_empty()))
-            .or_else(|| user_data.as_ref().and_then(|u| u.mail_address.clone()).filter(|s| !s.trim().is_empty()))
+            .or_else(|| {
+                user_data
+                    .as_ref()
+                    .and_then(|u| u.nickname.clone())
+                    .filter(|s| !s.trim().is_empty())
+            })
+            .or_else(|| {
+                user_data
+                    .as_ref()
+                    .and_then(|u| u.mail_address.clone())
+                    .filter(|s| !s.trim().is_empty())
+            })
             .unwrap_or_else(|| {
                 if !final_nid.is_empty() {
-                    format!("Cuenta Netmarble ({})", &final_nid[..final_nid.len().min(8)])
+                    format!(
+                        "Cuenta Netmarble ({})",
+                        &final_nid[..final_nid.len().min(8)]
+                    )
                 } else {
                     "Cuenta Netmarble".to_string()
                 }
@@ -615,10 +658,15 @@ impl AuthManager {
             31 => "epic",
             32 => "playstation",
             _ => "netmarble",
-        }.to_string();
+        }
+        .to_string();
 
         let (jwt_sub, jwt_exp) = Self::decode_jwt_claims(&access_token);
-        let player_id = if !final_nid.is_empty() { final_nid } else { jwt_sub };
+        let player_id = if !final_nid.is_empty() {
+            final_nid
+        } else {
+            jwt_sub
+        };
         let expires_at = if jwt_exp > 0 {
             jwt_exp
         } else {
@@ -638,7 +686,10 @@ impl AuthManager {
         };
 
         Self::save_session(&session)?;
-        println!("✓ ¡Sesión oficial NM guardada con éxito para {}!", session.profile_name);
+        println!(
+            "✓ ¡Sesión oficial NM guardada con éxito para {}!",
+            session.profile_name
+        );
 
         Ok(session)
     }
@@ -681,7 +732,10 @@ impl AuthManager {
         client: &reqwest::Client,
         launcher_token: &str,
     ) -> Result<GameProfileData> {
-        let url = format!("{}/game-profile?gameCode={}&platformAuthType=NM", NM_API_BASE, GAME_CODE);
+        let url = format!(
+            "{}/game-profile?gameCode={}&platformAuthType=NM",
+            NM_API_BASE, GAME_CODE
+        );
         let resp = client
             .get(&url)
             .header("Authorization", format!("Bearer {}", launcher_token))
@@ -973,23 +1027,42 @@ WINE REGISTRY Version 2
     #[test]
     fn sin_seccion_devuelve_none() {
         let reg = "[Software\\\\Valve\\\\Steam]\n\"Foo\"=\"Bar\"\n";
-        assert_eq!(AuthManager::parse_launcher_device_key_from_reg_content(reg), None);
+        assert_eq!(
+            AuthManager::parse_launcher_device_key_from_reg_content(reg),
+            None
+        );
         assert_eq!(AuthManager::parse_nm_device_key_from_reg_content(reg), None);
     }
 
     #[test]
     fn build_auth_url_incluye_web_redirect_y_soporte_token() {
         let url = AuthManager::build_auth_url("google", 55000, "es");
-        assert!(url.contains("webViewType=web"), "Debe usar webViewType=web para redirección estándar de navegador");
-        assert!(url.contains("redirectUrl=http%3A%2F%2F127.0.0.1%3A55000%2FredirectLauncher"), "Debe tener redirectUrl a localhost");
-        assert!(url.contains("supportFeature=redirectParams%7CaccessToken"), "Debe solicitar el accessToken en redirectParams");
-        assert!(url.contains("idpType=google"), "Debe enviar idpType=google para Google SSO");
+        assert!(
+            url.contains("webViewType=web"),
+            "Debe usar webViewType=web para redirección estándar de navegador"
+        );
+        assert!(
+            url.contains("redirectUrl=http%3A%2F%2F127.0.0.1%3A55000%2FredirectLauncher"),
+            "Debe tener redirectUrl a localhost"
+        );
+        assert!(
+            url.contains("supportFeature=redirectParams%7CaccessToken"),
+            "Debe solicitar el accessToken en redirectParams"
+        );
+        assert!(
+            url.contains("idpType=google"),
+            "Debe enviar idpType=google para Google SSO"
+        );
     }
 
     #[tokio::test]
     async fn process_auth_result_rechaza_favicon_y_rutas_http() {
-        assert!(AuthManager::process_auth_result("/favicon.ico").await.is_err());
-        assert!(AuthManager::process_auth_result("/redirectLauncher").await.is_err());
+        assert!(AuthManager::process_auth_result("/favicon.ico")
+            .await
+            .is_err());
+        assert!(AuthManager::process_auth_result("/redirectLauncher")
+            .await
+            .is_err());
         assert!(AuthManager::process_auth_result("/").await.is_err());
         assert!(AuthManager::process_auth_result("").await.is_err());
     }
@@ -1010,4 +1083,3 @@ WINE REGISTRY Version 2
         assert!(AuthManager::save_session(&bad_session).is_err());
     }
 }
-

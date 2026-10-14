@@ -1,13 +1,139 @@
 use anyhow::{anyhow, Context, Result};
-use md5::{Digest, Md5};
+use futures_util::StreamExt;
+use md5::{Digest as Md5Digest, Md5};
+use rayon::prelude::*;
 use reqwest::header::RANGE;
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+use tauri::ipc::Channel;
 use tokio::sync::mpsc::Sender;
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase", tag = "event", content = "data")]
+pub enum DownloadEvent {
+    Progress { downloaded: u64, total: u64 },
+    Finished { path: String },
+    Error { message: String },
+}
+
+#[derive(Deserialize)]
+pub struct FileManifestItem {
+    pub relative_path: String,
+    pub expected_sha256: String,
+}
+
+#[tauri::command]
+pub async fn download_with_resume(
+    url: String,
+    dest_path: PathBuf,
+    on_event: Channel<DownloadEvent>,
+) -> Result<(), String> {
+    if let Some(parent) = dest_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let part_path = dest_path.with_extension("part");
+    let client = reqwest::Client::new();
+    let mut downloaded = fs::metadata(&part_path)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+
+    let mut request = client.get(&url);
+    if downloaded > 0 {
+        request = request.header(RANGE, format!("bytes={downloaded}-"));
+    }
+
+    let response = request.send().await.map_err(|e| e.to_string())?;
+    let status = response.status();
+
+    if status == reqwest::StatusCode::OK {
+        downloaded = 0;
+    } else if status != reqwest::StatusCode::PARTIAL_CONTENT && !status.is_success() {
+        let message = format!("Error del servidor HTTP: {status}");
+        let _ = on_event.send(DownloadEvent::Error {
+            message: message.clone(),
+        });
+        return Err(message);
+    }
+
+    let total_size = response.content_length().unwrap_or(0) + downloaded;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(downloaded > 0)
+        .truncate(downloaded == 0)
+        .open(&part_path)
+        .map_err(|e| e.to_string())?;
+
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let data = chunk.map_err(|e| e.to_string())?;
+        file.write_all(&data).map_err(|e| e.to_string())?;
+        downloaded += data.len() as u64;
+
+        let _ = on_event.send(DownloadEvent::Progress {
+            downloaded,
+            total: total_size,
+        });
+    }
+
+    file.flush().map_err(|e| e.to_string())?;
+    drop(file);
+    fs::rename(&part_path, &dest_path).map_err(|e| e.to_string())?;
+
+    let _ = on_event.send(DownloadEvent::Finished {
+        path: dest_path.to_string_lossy().into_owned(),
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn verify_game_files(
+    game_dir: PathBuf,
+    manifest: Vec<FileManifestItem>,
+) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        manifest
+            .par_iter()
+            .filter_map(|item| {
+                let full_path = game_dir.join(&item.relative_path);
+                if !full_path.exists() {
+                    return Some(item.relative_path.clone());
+                }
+
+                match compute_sha256(&full_path) {
+                    Ok(hash) if hash.eq_ignore_ascii_case(&item.expected_sha256) => None,
+                    _ => Some(item.relative_path.clone()),
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+fn compute_sha256(path: &Path) -> std::io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 65536];
+
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+
+    Ok(hex::encode(hasher.finalize()))
+}
 
 #[derive(Debug, Clone)]
 pub struct DownloadProgress {

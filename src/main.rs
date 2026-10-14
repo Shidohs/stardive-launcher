@@ -471,6 +471,8 @@ fn main() -> Result<()> {
         .invoke_handler(tauri::generate_handler![
             get_launcher_status,
             start_download,
+            downloader::download_with_resume,
+            downloader::verify_game_files,
             cancel_download,
             launch_game,
             get_config_and_runners,

@@ -106,7 +106,12 @@ impl GameRunner {
             if arg.starts_with("NMENV=") || arg.starts_with("-NMENV=") {
                 has_nmenv = true;
             }
-            if (arg.starts_with("NMAUTH_TYPE=") || arg.starts_with("NMAUTH_TOKEN=") || arg.starts_with("-NMAUTH_TYPE=") || arg.starts_with("-NMAUTH_TOKEN=")) && has_nmauth {
+            if (arg.starts_with("NMAUTH_TYPE=")
+                || arg.starts_with("NMAUTH_TOKEN=")
+                || arg.starts_with("-NMAUTH_TYPE=")
+                || arg.starts_with("-NMAUTH_TOKEN="))
+                && has_nmauth
+            {
                 // Ya inyectado dinámicamente desde auth.json
                 continue;
             }
@@ -271,7 +276,10 @@ fn ensure_wine_registry_device_key(prefix_dir: &std::path::Path, device_key: &st
                             .collect();
                         content.replace_range(sec_idx..sec_end, &lines.join("\n"));
                     } else {
-                        content.insert_str(sec_idx + section_header.len() + 1, &format!("{}\n", entry));
+                        content.insert_str(
+                            sec_idx + section_header.len() + 1,
+                            &format!("{}\n", entry),
+                        );
                     }
                 } else {
                     content.push_str(&format!("\n{}\n", entry));
@@ -291,4 +299,3 @@ fn ensure_wine_registry_device_key(prefix_dir: &std::path::Path, device_key: &st
         let _ = std::fs::write(&user_reg, content);
     }
 }
-

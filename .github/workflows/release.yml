@@ -72,10 +72,10 @@ jobs:
           cp target/release/stardive-launcher "$STAGING/usr/bin/stardive-launcher"
           chmod 755 "$STAGING/usr/bin/stardive-launcher"
 
-          if [ -f assets/icon.png ]; then
-            cp assets/icon.png "$STAGING/usr/share/pixmaps/stardive-launcher.png"
-          elif [ -f icons/icon.png ]; then
+          if [ -f icons/icon.png ]; then
             cp icons/icon.png "$STAGING/usr/share/pixmaps/stardive-launcher.png"
+          elif [ -f ui/assets/icon.png ]; then
+            cp ui/assets/icon.png "$STAGING/usr/share/pixmaps/stardive-launcher.png"
           fi
 
           printf "%s\n" \

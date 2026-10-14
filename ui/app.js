@@ -489,6 +489,26 @@ async function refreshLogs() {
   }
 }
 
+// Sync DXVK Async availability based on Render API selection (DX12 vs DX11)
+function syncDxvkAsyncState() {
+  const select = document.getElementById("cfg-render-api");
+  if (!select) return;
+  const renderApi = select.value;
+  const rowDxvk = document.getElementById("row-cfg-dxvk");
+  const inputDxvk = document.getElementById("cfg-dxvk");
+  const descDxvk = document.getElementById("desc-cfg-dxvk");
+
+  if (renderApi === "DirectX12") {
+    if (rowDxvk) rowDxvk.classList.add("disabled");
+    if (inputDxvk) inputDxvk.disabled = true;
+    if (descDxvk) descDxvk.textContent = "Inactivo: Solo aplica en modo DirectX 11 (VKD3D gestiona shaders en DX12).";
+  } else {
+    if (rowDxvk) rowDxvk.classList.remove("disabled");
+    if (inputDxvk) inputDxvk.disabled = false;
+    if (descDxvk) descDxvk.textContent = "Reduce tirones de compilación asíncrona de shaders en DX11.";
+  }
+}
+
 // Setup Settings Modal & Tabs
 function setupModals() {
   const modal = document.getElementById("modal-settings");
@@ -571,6 +591,8 @@ function setupModals() {
     modal.style.display = "none";
     await refreshStatus();
   });
+
+  document.getElementById("cfg-render-api").addEventListener("change", syncDxvkAsyncState);
 
   // Gamescope toggle input visibility
   document.getElementById("cfg-gamescope").addEventListener("change", (e) => {
@@ -782,6 +804,11 @@ async function loadSettingsForm() {
       });
       chipsContainer.appendChild(btn);
     });
+
+    // Synchronize DXVK Async availability with current Render API
+    if (typeof syncDxvkAsyncState === "function") {
+      syncDxvkAsyncState();
+    }
   } catch (err) {
     console.error("Failed to load settings:", err);
   }

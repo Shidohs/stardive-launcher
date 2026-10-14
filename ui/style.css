@@ -515,9 +515,11 @@ body {
 }
 
 .dialog-body {
-  padding: 20px 24px;
-  max-height: 380px;
+  padding: 20px 24px 36px 24px;
+  max-height: 400px;
   overflow-y: auto;
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, black calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to bottom, black 0%, black calc(100% - 28px), transparent 100%);
 }
 
 .tab-content {
@@ -643,6 +645,13 @@ select.m3-input option {
 
 .switch-row:hover {
   background: rgba(255, 255, 255, 0.05);
+}
+
+.switch-row.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+  background: transparent !important;
 }
 
 .switch-row input[type="checkbox"] {

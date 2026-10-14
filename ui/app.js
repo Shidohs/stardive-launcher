@@ -577,13 +577,57 @@ function setupModals() {
     document.getElementById("gamescope-args-group").style.display = e.target.checked ? "block" : "none";
   });
 
+  // Browse Folder Buttons (Rutas & Proton)
+  document.getElementById("btn-browse-proton").addEventListener("click", async () => {
+    try {
+      const cur = document.getElementById("cfg-proton").value;
+      const selected = await invoke("pick_path", { isDirectory: true, title: "Seleccionar carpeta de Proton / Wine", defaultPath: cur });
+      if (selected) document.getElementById("cfg-proton").value = selected;
+    } catch (err) {
+      console.warn("Browse proton cancelled or error:", err);
+    }
+  });
+
+  document.getElementById("btn-browse-game-dir").addEventListener("click", async () => {
+    try {
+      const cur = document.getElementById("cfg-game-dir").value;
+      const selected = await invoke("pick_path", { isDirectory: true, title: "Seleccionar carpeta de instalación de STARDIVE", defaultPath: cur });
+      if (selected) document.getElementById("cfg-game-dir").value = selected;
+    } catch (err) {
+      console.warn("Browse game-dir cancelled or error:", err);
+    }
+  });
+
+  document.getElementById("btn-browse-prefix-dir").addEventListener("click", async () => {
+    try {
+      const cur = document.getElementById("cfg-prefix-dir").value;
+      const selected = await invoke("pick_path", { isDirectory: true, title: "Seleccionar carpeta de Wine Prefix", defaultPath: cur });
+      if (selected) document.getElementById("cfg-prefix-dir").value = selected;
+    } catch (err) {
+      console.warn("Browse prefix-dir cancelled or error:", err);
+    }
+  });
+
   // Verify installed game files
   document.getElementById("btn-verify-files").addEventListener("click", async () => {
+    const fVerify = document.getElementById("feedback-verify");
+    if (fVerify) {
+      fVerify.className = "maint-feedback-inline loading";
+      fVerify.textContent = "⏳ Comprobando ejecutables y manifiesto...";
+    }
+    document.getElementById("dialog-feedback").textContent = "Verificando archivos del cliente...";
     try {
-      document.getElementById("dialog-feedback").textContent = "Verificando archivos del cliente...";
       const result = await invoke("verify_installed_game");
+      if (fVerify) {
+        fVerify.className = "maint-feedback-inline success";
+        fVerify.textContent = `✓ ${result}`;
+      }
       document.getElementById("dialog-feedback").textContent = result;
     } catch (err) {
+      if (fVerify) {
+        fVerify.className = "maint-feedback-inline error";
+        fVerify.textContent = `✗ Error: ${err}`;
+      }
       document.getElementById("dialog-feedback").textContent = `Error: ${err}`;
     }
     setTimeout(() => {
@@ -593,21 +637,57 @@ function setupModals() {
 
   // Clear Shader cache
   document.getElementById("btn-clear-shaders").addEventListener("click", async () => {
-    const count = await invoke("clear_shader_cache");
-    document.getElementById("dialog-feedback").textContent = `Se eliminaron ${count} archivos de caché de shaders.`;
+    const fShaders = document.getElementById("feedback-shaders");
+    if (fShaders) {
+      fShaders.className = "maint-feedback-inline loading";
+      fShaders.textContent = "⏳ Limpiando archivos de caché...";
+    }
+    try {
+      const count = await invoke("clear_shader_cache");
+      const msg = `✓ Se eliminaron ${count} archivos de caché de shaders (DXVK / VKD3D).`;
+      if (fShaders) {
+        fShaders.className = "maint-feedback-inline success";
+        fShaders.textContent = msg;
+      }
+      document.getElementById("dialog-feedback").textContent = msg;
+    } catch (err) {
+      if (fShaders) {
+        fShaders.className = "maint-feedback-inline error";
+        fShaders.textContent = `✗ Error: ${err}`;
+      }
+      document.getElementById("dialog-feedback").textContent = `Error: ${err}`;
+    }
     setTimeout(() => {
       document.getElementById("dialog-feedback").textContent = "";
-    }, 4000);
+    }, 5000);
   });
 
   // Rewrite Manifest
   document.getElementById("btn-rewrite-manifest").addEventListener("click", async () => {
-    await invoke("rewrite_manifest");
-    document.getElementById("dialog-feedback").textContent = "game_manifest.json regenerado.";
+    const fManifest = document.getElementById("feedback-manifest");
+    if (fManifest) {
+      fManifest.className = "maint-feedback-inline loading";
+      fManifest.textContent = "⏳ Regenerando game_manifest.json...";
+    }
+    try {
+      await invoke("rewrite_manifest");
+      const msg = "✓ game_manifest.json regenerado exitosamente.";
+      if (fManifest) {
+        fManifest.className = "maint-feedback-inline success";
+        fManifest.textContent = msg;
+      }
+      document.getElementById("dialog-feedback").textContent = msg;
+      await refreshStatus();
+    } catch (err) {
+      if (fManifest) {
+        fManifest.className = "maint-feedback-inline error";
+        fManifest.textContent = `✗ Error: ${err}`;
+      }
+      document.getElementById("dialog-feedback").textContent = `Error: ${err}`;
+    }
     setTimeout(() => {
       document.getElementById("dialog-feedback").textContent = "";
-    }, 4000);
-    await refreshStatus();
+    }, 5000);
   });
 
   // Apply FPS and UE5 tweaks inside tab

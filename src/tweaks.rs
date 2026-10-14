@@ -292,7 +292,7 @@ impl SystemTweaks {
     }
 }
 
-fn which_exists(bin: &str) -> bool {
+pub fn which_exists(bin: &str) -> bool {
     if let Ok(path_var) = std::env::var("PATH") {
         for p in path_var.split(':') {
             let candidate = Path::new(p).join(bin);

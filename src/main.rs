@@ -387,6 +387,70 @@ fn open_folder(target: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn pick_path(
+    is_directory: bool,
+    title: Option<String>,
+    default_path: Option<String>,
+) -> Result<Option<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut cmd =
+            if std::path::Path::new("/usr/bin/zenity").exists() || tweaks::which_exists("zenity") {
+                let mut c = std::process::Command::new("zenity");
+                c.arg("--file-selection");
+                if is_directory {
+                    c.arg("--directory");
+                }
+                if let Some(ref t) = title {
+                    c.arg(format!("--title={}", t));
+                }
+                if let Some(ref p) = default_path {
+                    if !p.is_empty() {
+                        let clean = p.trim_end_matches('/');
+                        if is_directory {
+                            c.arg(format!("--filename={}/", clean));
+                        } else {
+                            c.arg(format!("--filename={}", clean));
+                        }
+                    }
+                }
+                c
+            } else if tweaks::which_exists("kdialog") {
+                let mut c = std::process::Command::new("kdialog");
+                if is_directory {
+                    c.arg("--getexistingdirectory");
+                } else {
+                    c.arg("--getopenfilename");
+                }
+                if let Some(ref p) = default_path {
+                    if !p.is_empty() {
+                        c.arg(p);
+                    }
+                }
+                c
+            } else {
+                return Err(
+                    "No se encontró zenity ni kdialog para abrir el selector nativo.".to_string(),
+                );
+            };
+
+        match cmd.output() {
+            Ok(output) if output.status.success() => {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if path.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(path))
+                }
+            }
+            Ok(_) => Ok(None),
+            Err(e) => Err(format!("Error al ejecutar selector de archivos: {}", e)),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
     Ok(())
@@ -554,6 +618,7 @@ fn main() -> Result<()> {
             clear_shader_cache,
             rewrite_manifest,
             verify_installed_game,
+            pick_path,
             open_folder,
             open_external,
             get_logs,

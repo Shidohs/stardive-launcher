@@ -1,7 +1,26 @@
 #![allow(dead_code)]
 use anyhow::Result;
-use std::fs;
+use serde::{Deserialize, Serialize};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+pub const TWEAKS_MARKER_START: &str = "; --- STARDIVE LAUNCHER TWEAKS START ---";
+pub const TWEAKS_MARKER_END: &str = "; --- STARDIVE LAUNCHER TWEAKS END ---";
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct Ue5Tweaks {
+    #[serde(default)]
+    pub max_fps: u32,
+    #[serde(default)]
+    pub vsync: bool,
+    #[serde(default)]
+    pub disable_motion_blur: bool,
+    #[serde(default)]
+    pub disable_chromatic_aberration: bool,
+    #[serde(default)]
+    pub disable_film_grain: bool,
+}
 
 pub struct SystemTweaks;
 
@@ -69,9 +88,74 @@ impl SystemTweaks {
         which_exists("gamescope")
     }
 
-    /// Apply Unreal Engine 5 FPS Unlocker tweaks to Mongil: Star Dive
-    pub fn apply_fps_tweak(prefix_dir: &Path, fps_limit: u32, vsync: bool) -> Result<()> {
-        // Look in drive_c/users/<user>/AppData/Local/BigCat/Saved/Config/WindowsNoEditor/
+    /// Check if running inside gamescope or Steam Deck
+    pub fn is_running_in_gamescope() -> bool {
+        std::env::var("GAMESCOPE_WAYLAND_DISPLAY").is_ok()
+            || std::env::var("SteamDeck").as_deref() == Ok("1")
+    }
+
+    /// Parchea un archivo Engine.ini de Unreal Engine 5 con optimizaciones gráficas y FPS unlocker
+    pub fn apply_ue5_tweaks(engine_ini_path: &Path, tweaks: &Ue5Tweaks) -> Result<()> {
+        if let Some(parent) = engine_ini_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut content = if engine_ini_path.exists() {
+            fs::read_to_string(engine_ini_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        // Limpiar bloque previo generado por el launcher si existe
+        if let (Some(start), Some(end)) = (
+            content.find(TWEAKS_MARKER_START),
+            content.find(TWEAKS_MARKER_END),
+        ) {
+            content.replace_range(start..(end + TWEAKS_MARKER_END.len()), "");
+        }
+
+        let mut block = format!("\n{}\n[/Script/Engine.Engine]\n", TWEAKS_MARKER_START);
+        if tweaks.max_fps > 0 {
+            block.push_str(&format!(
+                "bSmoothFrameRate=False\nMinDesiredFrameRate=30.000000\nFixedFrameRate={}.000000\nMinSmoothedFrameRate=0\nMaxSmoothedFrameRate={}\n",
+                tweaks.max_fps, tweaks.max_fps
+            ));
+        } else {
+            block.push_str(
+                "bSmoothFrameRate=False\nMinSmoothedFrameRate=0\nMaxSmoothedFrameRate=240\n",
+            );
+        }
+        block.push_str("\n[/Script/Engine.UserInterfaceSettings]\nApplicationScale=1.0\n");
+
+        block.push_str("\n[SystemSettings]\n");
+        if tweaks.max_fps > 0 {
+            block.push_str(&format!("t.MaxFPS={}\n", tweaks.max_fps));
+        }
+        if tweaks.disable_motion_blur {
+            block.push_str("r.MotionBlurQuality=0\n");
+        }
+        if tweaks.disable_chromatic_aberration {
+            block.push_str("r.SceneColorFringeQuality=0\nr.SceneColorFringe.Max=0\n");
+        }
+        if tweaks.disable_film_grain {
+            block.push_str("r.Tonemapper.GrainQuantization=0\nr.FilmGrain=0\n");
+        }
+        block.push_str(&format!("{}\n", TWEAKS_MARKER_END));
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(engine_ini_path)?;
+
+        file.write_all(content.trim().as_bytes())?;
+        file.write_all(block.as_bytes())?;
+
+        Ok(())
+    }
+
+    /// Aplica ajustes de UE5 a todos los usuarios configurados en el prefijo de Wine
+    pub fn apply_user_tweaks(prefix_dir: &Path, tweaks: &Ue5Tweaks) -> Result<()> {
         let users_dir = prefix_dir.join("drive_c").join("users");
         if !users_dir.exists() {
             return Ok(());
@@ -93,25 +177,11 @@ impl SystemTweaks {
                     let _ = fs::create_dir_all(&config_dir);
                 }
 
-                // Tweak Engine.ini
+                // 1. Tweak Engine.ini con marcadores limpios
                 let engine_ini = config_dir.join("Engine.ini");
-                let mut content = if engine_ini.exists() {
-                    fs::read_to_string(&engine_ini).unwrap_or_default()
-                } else {
-                    String::new()
-                };
+                let _ = Self::apply_ue5_tweaks(&engine_ini, tweaks);
 
-                let tweak_block = format!(
-                    "\n[/Script/Engine.Engine]\nbSmoothFrameRate=False\nMinSmoothedFrameRate=0\nMaxSmoothedFrameRate={}\n\n[/Script/Engine.UserInterfaceSettings]\nApplicationScale=1.0\n",
-                    if fps_limit == 0 { 240 } else { fps_limit }
-                );
-
-                if !content.contains("[/Script/Engine.Engine]") {
-                    content.push_str(&tweak_block);
-                    let _ = fs::write(&engine_ini, content);
-                }
-
-                // Tweak GameUserSettings.ini
+                // 2. Tweak GameUserSettings.ini (FrameRateLimit y bUseVSync)
                 let gus_ini = config_dir.join("GameUserSettings.ini");
                 let mut gus_content = if gus_ini.exists() {
                     fs::read_to_string(&gus_ini).unwrap_or_default()
@@ -119,12 +189,12 @@ impl SystemTweaks {
                     String::new()
                 };
 
-                let fps_val = if fps_limit == 0 {
+                let fps_val = if tweaks.max_fps == 0 {
                     "0.000000"
                 } else {
-                    &format!("{}.000000", fps_limit)
+                    &format!("{}.000000", tweaks.max_fps)
                 };
-                let vsync_val = if vsync { "True" } else { "False" };
+                let vsync_val = if tweaks.vsync { "True" } else { "False" };
 
                 if !gus_content.contains("[/Script/BigCat.BigCatGameUserSettings]")
                     && !gus_content.contains("[/Script/Engine.GameUserSettings]")
@@ -134,7 +204,6 @@ impl SystemTweaks {
                         fps_val, vsync_val
                     ));
                 } else {
-                    // Update existing FrameRateLimit and bUseVSync
                     let mut lines: Vec<String> =
                         gus_content.lines().map(|s| s.to_string()).collect();
                     let mut found_fps = false;
@@ -165,6 +234,18 @@ impl SystemTweaks {
         }
 
         Ok(())
+    }
+
+    /// Apply Unreal Engine 5 FPS Unlocker tweaks to Mongil: Star Dive (retrocompatibilidad)
+    pub fn apply_fps_tweak(prefix_dir: &Path, fps_limit: u32, vsync: bool) -> Result<()> {
+        let tweaks = Ue5Tweaks {
+            max_fps: fps_limit,
+            vsync,
+            disable_motion_blur: false,
+            disable_chromatic_aberration: false,
+            disable_film_grain: false,
+        };
+        Self::apply_user_tweaks(prefix_dir, &tweaks)
     }
 
     /// Clear DXVK and VKD3D shader cache to resolve stuttering after updates

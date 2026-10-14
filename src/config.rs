@@ -30,6 +30,22 @@ pub struct LauncherConfig {
     #[serde(default)]
     pub vsync: bool,
     #[serde(default)]
+    pub render_api: Option<crate::runner::RenderApi>,
+    #[serde(default)]
+    pub use_umu: bool,
+    #[serde(default)]
+    pub enable_nvapi_dlss: bool,
+    #[serde(default)]
+    pub enable_wayland: bool,
+    #[serde(default = "default_close_action")]
+    pub close_action: String,
+    #[serde(default)]
+    pub disable_motion_blur: bool,
+    #[serde(default)]
+    pub disable_chromatic_aberration: bool,
+    #[serde(default)]
+    pub disable_film_grain: bool,
+    #[serde(default)]
     pub custom_env: HashMap<String, String>,
 }
 
@@ -39,6 +55,10 @@ fn default_gamescope_args() -> String {
 
 fn default_fps_limit() -> u32 {
     144
+}
+
+fn default_close_action() -> String {
+    "minimize".to_string()
 }
 
 impl Default for LauncherConfig {
@@ -75,6 +95,14 @@ impl Default for LauncherConfig {
             gamescope_args: default_gamescope_args(),
             fps_limit: default_fps_limit(),
             vsync: false,
+            render_api: Some(crate::runner::RenderApi::DirectX12),
+            use_umu: false,
+            enable_nvapi_dlss: true,
+            enable_wayland: false,
+            close_action: default_close_action(),
+            disable_motion_blur: false,
+            disable_chromatic_aberration: false,
+            disable_film_grain: false,
             custom_env: HashMap::new(),
         }
     }

@@ -251,15 +251,32 @@ fn cancel_download(state: tauri::State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 fn launch_game(
     app_handle: tauri::AppHandle,
+    window: tauri::Window,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let config = LauncherConfig::load().map_err(|e| e.to_string())?;
 
     let child = runner::GameRunner::launch(&config).map_err(|e| e.to_string())?;
+
+    let close_action = config.close_action.clone();
+    match close_action.as_str() {
+        "minimize" => {
+            let _ = window.minimize();
+        }
+        "tray" => {
+            let _ = window.hide();
+        }
+        "close" => {
+            std::process::exit(0);
+        }
+        _ => {}
+    }
+
     *state.game_process.lock().unwrap() = Some(child);
 
     let process_lock = state.game_process.clone();
     let app_handle_clone = app_handle.clone();
+    let window_clone = window.clone();
 
     // Spawn monitoring thread
     std::thread::spawn(move || {
@@ -271,6 +288,8 @@ fn launch_game(
             if !runner::GameRunner::is_running(&mut *proc_opt) {
                 let _ = app_handle_clone
                     .emit("game-status", serde_json::json!({ "is_running": false }));
+                let _ = window_clone.show();
+                let _ = window_clone.set_focus();
                 break;
             }
         }
@@ -303,6 +322,16 @@ fn apply_fps_tweak(fps_limit: u32, vsync: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn apply_ue5_tweaks(engine_ini_path: PathBuf, tweaks: tweaks::Ue5Tweaks) -> Result<(), String> {
+    tweaks::SystemTweaks::apply_ue5_tweaks(&engine_ini_path, &tweaks).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn is_running_in_gamescope() -> bool {
+    tweaks::SystemTweaks::is_running_in_gamescope()
+}
+
+#[tauri::command]
 fn clear_shader_cache() -> Result<usize, String> {
     let config = LauncherConfig::load().map_err(|e| e.to_string())?;
     tweaks::SystemTweaks::clear_shader_cache(&config.prefix_dir).map_err(|e| e.to_string())
@@ -312,6 +341,37 @@ fn clear_shader_cache() -> Result<usize, String> {
 fn rewrite_manifest() -> Result<(), String> {
     let config = LauncherConfig::load().map_err(|e| e.to_string())?;
     installer::Installer::write_manifest(&config.game_dir, "1.03.00", 61).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn verify_installed_game() -> Result<String, String> {
+    let config = LauncherConfig::load().map_err(|e| e.to_string())?;
+    let main_exe = config.game_exe_path();
+    let secondary_exe = config.secondary_exe_path();
+
+    if !main_exe.exists() {
+        return Err(format!(
+            "No se encontró el ejecutable principal en {:?}",
+            main_exe
+        ));
+    }
+
+    let mut found_count = 1;
+    if secondary_exe.exists() {
+        found_count += 1;
+    }
+
+    if let Some(manifest) = installer::Installer::read_manifest(&config.game_dir) {
+        Ok(format!(
+            "Instalación íntegra detectada (Versión {}, Build {}). {} ejecutables verificados.",
+            manifest.version, manifest.build_sequence, found_count
+        ))
+    } else {
+        Ok(format!(
+            "Archivos principales presentes ({} ejecutables verificados).",
+            found_count
+        ))
+    }
 }
 
 #[tauri::command]
@@ -350,10 +410,7 @@ fn get_auth_state() -> Result<auth::AuthStatusPayload, String> {
 }
 
 #[tauri::command]
-async fn start_auth_flow(
-    app_handle: tauri::AppHandle,
-    channel: String,
-) -> Result<String, String> {
+async fn start_auth_flow(app_handle: tauri::AppHandle, channel: String) -> Result<String, String> {
     let (port, rx) = auth::AuthManager::listen_for_auth_callback(55000)
         .await
         .map_err(|e| e.to_string())?;
@@ -361,14 +418,19 @@ async fn start_auth_flow(
     let auth_url = auth::AuthManager::build_auth_url(&channel, port, "es");
     println!("Abriendo Netmarble Members SSO en navegador: {}", auth_url);
 
-    let _ = std::process::Command::new("xdg-open").arg(&auth_url).spawn();
+    let _ = std::process::Command::new("xdg-open")
+        .arg(&auth_url)
+        .spawn();
 
     let app_handle_clone = app_handle.clone();
 
     tokio::spawn(async move {
         match rx.await {
             Ok(session) => {
-                println!("✓ Sesión oficial Netmarble NM recibida para {}", session.profile_name);
+                println!(
+                    "✓ Sesión oficial Netmarble NM recibida para {}",
+                    session.profile_name
+                );
                 let status = auth::AuthManager::get_status();
                 let _ = app_handle_clone.emit(
                     "auth-status-changed",
@@ -468,6 +530,15 @@ fn main() -> Result<()> {
     // Default: Launch Tauri GUI
     tauri::Builder::default()
         .manage(AppState::new())
+        .setup(|app| {
+            if tweaks::SystemTweaks::is_running_in_gamescope() {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_fullscreen(true);
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_launcher_status,
             start_download,
@@ -478,8 +549,11 @@ fn main() -> Result<()> {
             get_config_and_runners,
             save_config,
             apply_fps_tweak,
+            apply_ue5_tweaks,
+            is_running_in_gamescope,
             clear_shader_cache,
             rewrite_manifest,
+            verify_installed_game,
             open_folder,
             open_external,
             get_logs,

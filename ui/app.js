@@ -535,7 +535,15 @@ function setupModals() {
     currentConfig.wine_esync = document.getElementById("cfg-esync").checked;
     currentConfig.wine_fsync = document.getElementById("cfg-fsync").checked;
     currentConfig.nvapi = document.getElementById("cfg-nvapi").checked;
+    currentConfig.enable_nvapi_dlss = document.getElementById("cfg-nvapi").checked;
     currentConfig.proton_use_wined3d = document.getElementById("cfg-wined3d").checked;
+    currentConfig.close_action = document.getElementById("cfg-close-action").value;
+    currentConfig.render_api = document.getElementById("cfg-render-api").value;
+    currentConfig.use_umu = document.getElementById("cfg-use-umu").checked;
+    currentConfig.enable_wayland = document.getElementById("cfg-wayland").checked;
+    currentConfig.disable_motion_blur = document.getElementById("cfg-motion-blur").checked;
+    currentConfig.disable_chromatic_aberration = document.getElementById("cfg-chromatic").checked;
+    currentConfig.disable_film_grain = document.getElementById("cfg-film-grain").checked;
 
     // Parse custom env variables
     const envStr = document.getElementById("cfg-custom-env").value.trim();
@@ -569,6 +577,20 @@ function setupModals() {
     document.getElementById("gamescope-args-group").style.display = e.target.checked ? "block" : "none";
   });
 
+  // Verify installed game files
+  document.getElementById("btn-verify-files").addEventListener("click", async () => {
+    try {
+      document.getElementById("dialog-feedback").textContent = "Verificando archivos del cliente...";
+      const result = await invoke("verify_installed_game");
+      document.getElementById("dialog-feedback").textContent = result;
+    } catch (err) {
+      document.getElementById("dialog-feedback").textContent = `Error: ${err}`;
+    }
+    setTimeout(() => {
+      document.getElementById("dialog-feedback").textContent = "";
+    }, 5000);
+  });
+
   // Clear Shader cache
   document.getElementById("btn-clear-shaders").addEventListener("click", async () => {
     const count = await invoke("clear_shader_cache");
@@ -588,13 +610,26 @@ function setupModals() {
     await refreshStatus();
   });
 
-  // Apply FPS tweak inside tab
+  // Apply FPS and UE5 tweaks inside tab
   document.getElementById("btn-apply-fps").addEventListener("click", async () => {
     const fpsRadio = document.querySelector('input[name="fps"]:checked');
     const fps = fpsRadio ? parseInt(fpsRadio.value, 10) : 144;
     const vsync = document.getElementById("cfg-vsync").checked;
+    const disable_motion_blur = document.getElementById("cfg-motion-blur").checked;
+    const disable_chromatic_aberration = document.getElementById("cfg-chromatic").checked;
+    const disable_film_grain = document.getElementById("cfg-film-grain").checked;
+
+    if (currentConfig) {
+      currentConfig.fps_limit = fps;
+      currentConfig.vsync = vsync;
+      currentConfig.disable_motion_blur = disable_motion_blur;
+      currentConfig.disable_chromatic_aberration = disable_chromatic_aberration;
+      currentConfig.disable_film_grain = disable_film_grain;
+      await invoke("save_config", { config: currentConfig });
+    }
+
     await invoke("apply_fps_tweak", { fpsLimit: fps, vsync });
-    document.getElementById("dialog-feedback").textContent = "Configuración de FPS inyectada.";
+    document.getElementById("dialog-feedback").textContent = "Configuración gráfica y FPS inyectada.";
     setTimeout(() => {
       document.getElementById("dialog-feedback").textContent = "";
     }, 4000);
@@ -612,19 +647,27 @@ async function loadSettingsForm() {
     document.getElementById("cfg-game-dir").value = currentConfig.game_dir || "";
     document.getElementById("cfg-prefix-dir").value = currentConfig.prefix_dir || "";
     document.getElementById("cfg-args").value = currentConfig.launch_args || "NMENV=nmp";
+    document.getElementById("cfg-close-action").value = currentConfig.close_action || "minimize";
 
+    document.getElementById("cfg-render-api").value = currentConfig.render_api || "DirectX12";
+    document.getElementById("cfg-use-umu").checked = !!currentConfig.use_umu;
     document.getElementById("cfg-gamemode").checked = !!currentConfig.use_gamemode;
     document.getElementById("cfg-mangohud").checked = !!currentConfig.use_mangohud;
     document.getElementById("cfg-gamescope").checked = !!currentConfig.use_gamescope;
     document.getElementById("gamescope-args-group").style.display = currentConfig.use_gamescope ? "block" : "none";
     document.getElementById("cfg-gamescope-args").value = currentConfig.gamescope_args || "-W 1920 -H 1080 -f";
+    document.getElementById("cfg-wayland").checked = !!currentConfig.enable_wayland;
 
     document.getElementById("cfg-dxvk").checked = !!currentConfig.dxvk_async;
     document.getElementById("cfg-esync").checked = !!currentConfig.wine_esync;
     document.getElementById("cfg-fsync").checked = !!currentConfig.wine_fsync;
-    document.getElementById("cfg-nvapi").checked = !!currentConfig.nvapi;
+    document.getElementById("cfg-nvapi").checked = !!(currentConfig.nvapi || currentConfig.enable_nvapi_dlss);
     document.getElementById("cfg-wined3d").checked = !!currentConfig.proton_use_wined3d;
     document.getElementById("cfg-vsync").checked = !!currentConfig.vsync;
+
+    document.getElementById("cfg-motion-blur").checked = !!currentConfig.disable_motion_blur;
+    document.getElementById("cfg-chromatic").checked = !!currentConfig.disable_chromatic_aberration;
+    document.getElementById("cfg-film-grain").checked = !!currentConfig.disable_film_grain;
 
     // Load custom env vars as string
     if (currentConfig.custom_env && typeof currentConfig.custom_env === "object") {

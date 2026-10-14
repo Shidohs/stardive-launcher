@@ -189,11 +189,38 @@
             <label>Argumentos de Lanzamiento:</label>
             <input type="text" id="cfg-args" class="m3-input" value="NMENV=nmp">
           </div>
+
+          <div class="form-group">
+            <label>Acción de la ventana al iniciar el juego:</label>
+            <select id="cfg-close-action" class="m3-input">
+              <option value="minimize">Minimizar ventana (Recomendado)</option>
+              <option value="tray">Ocultar a la bandeja / segundo plano</option>
+              <option value="keep">Mantener ventana abierta</option>
+              <option value="close">Cerrar launcher completamente (Ahorro de RAM)</option>
+            </select>
+          </div>
         </div>
 
         <!-- Tab 2: Linux Tweaks -->
         <div class="tab-content" id="tab-linux">
           <h4 class="section-title">Optimizaciones de Rendimiento en Linux</h4>
+
+          <div class="form-group">
+            <label>API Gráfica (Unreal Engine 5):</label>
+            <select id="cfg-render-api" class="m3-input">
+              <option value="DirectX12">DirectX 12 (VKD3D-Proton / DXR11 - Recomendado UE5)</option>
+              <option value="DirectX11">DirectX 11 (DXVK / DXVK-Async - Modo Legacy)</option>
+            </select>
+            <p class="section-desc">DX12 optimiza Nanite y Lumen en UE5 con VKD3D. DX11 utiliza la capa DXVK tradicional.</p>
+          </div>
+
+          <label class="switch-row">
+            <div>
+              <span>Usar UMU Launcher (<code class="code-inline">umu-run</code>)</span>
+              <p class="section-desc">Ejecución universal de Proton fuera de Steam con base de datos de compatibilidad.</p>
+            </div>
+            <input type="checkbox" id="cfg-use-umu">
+          </label>
           
           <label class="switch-row">
             <span>Activar GameMode (<code class="code-inline">gamemoderun</code>)</span>
@@ -214,6 +241,14 @@
             <label>Argumentos de Gamescope:</label>
             <input type="text" id="cfg-gamescope-args" class="m3-input" value="-W 1920 -H 1080 -f">
           </div>
+
+          <label class="switch-row">
+            <div>
+              <span>PROTON_ENABLE_WAYLAND (Wayland Nativo)</span>
+              <p class="section-desc">Habilita el controlador Wayland experimental de Proton para menor latencia.</p>
+            </div>
+            <input type="checkbox" id="cfg-wayland">
+          </label>
 
           <div class="divider"></div>
 
@@ -253,7 +288,7 @@
 
         <!-- Tab 3: FPS Tweaks -->
         <div class="tab-content" id="tab-fps">
-          <h4 class="section-title">Unreal Engine 5 - Desbloqueo de FPS</h4>
+          <h4 class="section-title">Unreal Engine 5 - Desbloqueo de FPS & Gráficos</h4>
           <p class="section-desc">Modifica directamente <code class="code-inline">Engine.ini</code> y <code class="code-inline">GameUserSettings.ini</code> para saltar el bloqueo de 60 FPS:</p>
 
           <div class="fps-radios">
@@ -269,13 +304,50 @@
             <input type="checkbox" id="cfg-vsync">
           </label>
 
-          <button class="m3-btn-secondary" id="btn-apply-fps" style="margin-top: 14px;">⚡ Aplicar al Motor Ahora</button>
+          <div class="divider" style="margin: 16px 0;"></div>
+          <h4 class="section-title">Optimizaciones Visuales de Post-Procesado</h4>
+
+          <label class="switch-row">
+            <div>
+              <span>Desactivar Desenfoque de Movimiento (Motion Blur)</span>
+              <p class="section-desc">Mejora la nitidez visual en combates rápidos (<code class="code-inline">r.MotionBlurQuality=0</code>).</p>
+            </div>
+            <input type="checkbox" id="cfg-motion-blur">
+          </label>
+
+          <label class="switch-row">
+            <div>
+              <span>Desactivar Aberración Cromática</span>
+              <p class="section-desc">Elimina la dispersión de color en los bordes (<code class="code-inline">r.SceneColorFringeQuality=0</code>).</p>
+            </div>
+            <input type="checkbox" id="cfg-chromatic">
+          </label>
+
+          <label class="switch-row">
+            <div>
+              <span>Desactivar Granulado de Película (Film Grain)</span>
+              <p class="section-desc">Imagen limpia sin ruido cosmético añadido (<code class="code-inline">r.FilmGrain=0</code>).</p>
+            </div>
+            <input type="checkbox" id="cfg-film-grain">
+          </label>
+
+          <button class="m3-btn-secondary" id="btn-apply-fps" style="margin-top: 14px;">⚡ Aplicar Ajustes al Motor Ahora</button>
         </div>
 
         <!-- Tab 4: Mantenimiento -->
         <div class="tab-content" id="tab-maint">
           <h4 class="section-title">Mantenimiento y Reparación</h4>
-          
+
+          <div class="maint-row">
+            <div>
+              <strong>Verificar Integridad de Archivos</strong>
+              <p class="section-desc">Comprueba ejecutables y binarios principales del juego en tu prefijo.</p>
+            </div>
+            <button class="m3-btn-secondary" id="btn-verify-files">Verificar Archivos</button>
+          </div>
+
+          <div class="divider"></div>
+
           <div class="maint-row">
             <div>
               <strong>Limpiar Caché de Shaders (DXVK/VKD3D)</strong>

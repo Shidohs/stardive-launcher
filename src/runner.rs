@@ -1,8 +1,21 @@
 use crate::config::LauncherConfig;
 use anyhow::{anyhow, Context, Result};
+use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+pub enum RenderApi {
+    DirectX12, // Usa VKD3D-Proton (Recomendado para UE5)
+    DirectX11, // Usa DXVK / DXVK-Async
+}
+
+impl Default for RenderApi {
+    fn default() -> Self {
+        Self::DirectX12
+    }
+}
 
 pub struct GameRunner;
 
@@ -17,7 +30,7 @@ impl GameRunner {
         }
 
         let proton_bin = config.proton_bin();
-        if !proton_bin.exists() {
+        if !config.use_umu && !proton_bin.exists() {
             return Err(anyhow!(
                 "El ejecutable de Proton no fue encontrado en: {:?}. Verifica la ruta de GE-Proton en la configuración.",
                 proton_bin
@@ -39,14 +52,17 @@ impl GameRunner {
             .try_clone()
             .context("No se pudo clonar el handle del archivo de log")?;
 
-        // Automatically apply Unreal Engine 5 FPS Unlocker tweaks to config files
-        let _ = crate::tweaks::SystemTweaks::apply_fps_tweak(
-            &prefix_dir,
-            config.fps_limit,
-            config.vsync,
-        );
+        // Aplicar automáticamente optimizaciones de Unreal Engine 5 (FPS unlocker, motion blur, etc.)
+        let ue5_tweaks = crate::tweaks::Ue5Tweaks {
+            max_fps: config.fps_limit,
+            vsync: config.vsync,
+            disable_motion_blur: config.disable_motion_blur,
+            disable_chromatic_aberration: config.disable_chromatic_aberration,
+            disable_film_grain: config.disable_film_grain,
+        };
+        let _ = crate::tweaks::SystemTweaks::apply_user_tweaks(prefix_dir, &ue5_tweaks);
 
-        // Determine executable command with wrappers (gamemoderun / gamescope)
+        // Determinar comando base con wrappers (gamescope / gamemoderun / umu-run / proton)
         let mut cmd = if config.use_gamescope && crate::tweaks::SystemTweaks::has_gamescope() {
             let mut c = Command::new("gamescope");
             for arg in config.gamescope_args.split_whitespace() {
@@ -56,14 +72,26 @@ impl GameRunner {
             if config.use_gamemode && crate::tweaks::SystemTweaks::has_gamemode() {
                 c.arg("gamemoderun");
             }
-            c.arg(&proton_bin);
-            c.arg("run");
+            if config.use_umu {
+                c.arg("umu-run");
+            } else {
+                c.arg(&proton_bin);
+                c.arg("run");
+            }
             c.arg(&game_exe);
             c
         } else if config.use_gamemode && crate::tweaks::SystemTweaks::has_gamemode() {
             let mut c = Command::new("gamemoderun");
-            c.arg(&proton_bin);
-            c.arg("run");
+            if config.use_umu {
+                c.arg("umu-run");
+            } else {
+                c.arg(&proton_bin);
+                c.arg("run");
+            }
+            c.arg(&game_exe);
+            c
+        } else if config.use_umu {
+            let mut c = Command::new("umu-run");
             c.arg(&game_exe);
             c
         } else {
@@ -72,6 +100,21 @@ impl GameRunner {
             c.arg(&game_exe);
             c
         };
+
+        // Configuración de API gráfica para Unreal Engine 5 (DirectX 12 vs DirectX 11)
+        let render_api = config.render_api.unwrap_or_default();
+        match render_api {
+            RenderApi::DirectX12 => {
+                cmd.arg("-dx12");
+                cmd.env("VKD3D_CONFIG", "dxr11");
+                cmd.env("PROTON_USE_WINED3D", "0");
+            }
+            RenderApi::DirectX11 => {
+                cmd.arg("-dx11");
+                cmd.env("DXVK_ASYNC", "1");
+                cmd.env("DXVK_GPLASYNCCACHE", "1");
+            }
+        }
 
         // Netmarble Official SSO Authentication Token Injection
         let mut has_nmauth = false;
@@ -139,10 +182,10 @@ impl GameRunner {
             cmd.arg("-NMENV=nmp");
         }
 
-        // Set working directory to the game root
+        // Directorio de trabajo
         cmd.current_dir(game_dir);
 
-        // Inherit display and session environment variables
+        // Heredar variables de pantalla y sesión
         if let Ok(disp) = std::env::var("DISPLAY") {
             cmd.env("DISPLAY", disp);
         } else {
@@ -155,21 +198,24 @@ impl GameRunner {
             cmd.env("WAYLAND_DISPLAY", wayland);
         }
 
-        // Set Proton environment
+        // Configuración de Proton y UMU
         cmd.env("STEAM_COMPAT_DATA_PATH", prefix_dir);
         let steam_client_dir = dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("/home/shidox"))
             .join(".local")
             .join("share")
             .join("Steam");
-        cmd.env("STEAM_COMPAT_CLIENT_INSTALL_PATH", steam_client_dir);
+        cmd.env("STEAM_COMPAT_CLIENT_INSTALL_PATH", &steam_client_dir);
         cmd.env("WINEPREFIX", prefix_dir);
+        cmd.env("PROTONPATH", &config.proton_path);
+        cmd.env("GAMEID", "umu-stardive");
 
         if config.use_mangohud {
             cmd.env("MANGOHUD", "1");
+            cmd.env("MANGOHUD_DLSYM", "1");
         }
 
-        // Performance & compatibility flags
+        // Flags de rendimiento y compatibilidad
         if config.dxvk_async {
             cmd.env("DXVK_ASYNC", "1");
         }
@@ -179,18 +225,22 @@ impl GameRunner {
         if config.wine_fsync {
             cmd.env("WINEFSYNC", "1");
         }
-        if config.nvapi {
+        if config.nvapi || config.enable_nvapi_dlss {
             cmd.env("PROTON_ENABLE_NVAPI", "1");
+            cmd.env("DXVK_ENABLE_NVAPI", "1");
+        }
+        if config.enable_wayland {
+            cmd.env("PROTON_ENABLE_WAYLAND", "1");
         }
 
-        // WineD3D setting: false/0 forces DXVK/VKD3D (required for Unreal Engine 5), 1 enables WineD3D OpenGL
+        // Proton WineD3D setting (false/0 para forzar DXVK/VKD3D necesario para UE5)
         if config.proton_use_wined3d {
             cmd.env("PROTON_USE_WINED3D", "1");
         } else {
             cmd.env("PROTON_USE_WINED3D", "0");
         }
 
-        // Additional custom user environment variables
+        // Variables de entorno personalizadas del usuario
         for (k, v) in &config.custom_env {
             let mut val = v.clone();
             if k.eq_ignore_ascii_case("PROTON_USE_WINED3D") {
@@ -215,8 +265,8 @@ impl GameRunner {
 
         let child = cmd.spawn().with_context(|| {
             format!(
-                "Fallo al ejecutar el comando con Proton: {:?} run {:?}",
-                proton_bin, game_exe
+                "Fallo al ejecutar el juego con: {:?}",
+                if config.use_umu { "umu-run" } else { "proton" }
             )
         })?;
 

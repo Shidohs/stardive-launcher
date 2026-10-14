@@ -481,14 +481,28 @@ body {
 .close-btn {
   background: none;
   border: none;
-  font-size: 24px;
   color: var(--md-sys-color-on-surface-variant);
   cursor: pointer;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  padding: 0;
 }
 
 .close-btn:hover {
   color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.svg-close {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  pointer-events: none;
 }
 
 .dialog-tabs {
@@ -618,15 +632,22 @@ select.m3-input option {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
   cursor: pointer;
   transition: all 0.2s var(--m3-ease);
   flex-shrink: 0;
 }
 
+.browse-btn .svg-mini {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+  pointer-events: none;
+}
+
 .browse-btn:hover {
   background: var(--md-sys-color-primary);
   border-color: var(--md-sys-color-primary-hover);
+  color: #ffffff;
   transform: translateY(-1px);
 }
 
@@ -773,13 +794,50 @@ select.m3-input option {
   padding: 10px 0;
 }
 
+.btn-with-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-with-icon .svg-btn {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+  flex-shrink: 0;
+}
+
 .maint-feedback-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   font-weight: 600;
   margin-top: 6px;
   min-height: 16px;
   line-height: 1.4;
   transition: all 0.2s ease;
+}
+
+.maint-feedback-inline .svg-feedback {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  flex-shrink: 0;
+}
+
+.maint-feedback-inline .svg-feedback-spin {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  flex-shrink: 0;
+  animation: feedback-spin 0.9s linear infinite;
+}
+
+@keyframes feedback-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .maint-feedback-inline.success {

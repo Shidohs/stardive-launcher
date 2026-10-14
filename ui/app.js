@@ -509,6 +509,21 @@ function syncDxvkAsyncState() {
   }
 }
 
+// Render inline maintenance feedback with clean SVG icons
+function setInlineFeedback(el, type, text) {
+  if (!el) return;
+  el.className = `maint-feedback-inline ${type}`;
+  let iconSvg = "";
+  if (type === "loading") {
+    iconSvg = `<svg viewBox="0 0 24 24" class="svg-feedback-spin"><path d="M12 4V2A10 10 0 0 0 2 12h2a8 8 0 0 1 8-8z"/></svg>`;
+  } else if (type === "success") {
+    iconSvg = `<svg viewBox="0 0 24 24" class="svg-feedback"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`;
+  } else if (type === "error") {
+    iconSvg = `<svg viewBox="0 0 24 24" class="svg-feedback"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`;
+  }
+  el.innerHTML = `${iconSvg}<span>${text}</span>`;
+}
+
 // Setup Settings Modal & Tabs
 function setupModals() {
   const modal = document.getElementById("modal-settings");
@@ -634,21 +649,18 @@ function setupModals() {
   document.getElementById("btn-verify-files").addEventListener("click", async () => {
     const fVerify = document.getElementById("feedback-verify");
     if (fVerify) {
-      fVerify.className = "maint-feedback-inline loading";
-      fVerify.textContent = "⏳ Comprobando ejecutables y manifiesto...";
+      setInlineFeedback(fVerify, "loading", "Comprobando ejecutables y manifiesto...");
     }
     document.getElementById("dialog-feedback").textContent = "Verificando archivos del cliente...";
     try {
       const result = await invoke("verify_installed_game");
       if (fVerify) {
-        fVerify.className = "maint-feedback-inline success";
-        fVerify.textContent = `✓ ${result}`;
+        setInlineFeedback(fVerify, "success", result);
       }
       document.getElementById("dialog-feedback").textContent = result;
     } catch (err) {
       if (fVerify) {
-        fVerify.className = "maint-feedback-inline error";
-        fVerify.textContent = `✗ Error: ${err}`;
+        setInlineFeedback(fVerify, "error", `Error: ${err}`);
       }
       document.getElementById("dialog-feedback").textContent = `Error: ${err}`;
     }
@@ -661,21 +673,18 @@ function setupModals() {
   document.getElementById("btn-clear-shaders").addEventListener("click", async () => {
     const fShaders = document.getElementById("feedback-shaders");
     if (fShaders) {
-      fShaders.className = "maint-feedback-inline loading";
-      fShaders.textContent = "⏳ Limpiando archivos de caché...";
+      setInlineFeedback(fShaders, "loading", "Limpiando archivos de caché...");
     }
     try {
       const count = await invoke("clear_shader_cache");
-      const msg = `✓ Se eliminaron ${count} archivos de caché de shaders (DXVK / VKD3D).`;
+      const msg = `Se eliminaron ${count} archivos de caché de shaders (DXVK / VKD3D).`;
       if (fShaders) {
-        fShaders.className = "maint-feedback-inline success";
-        fShaders.textContent = msg;
+        setInlineFeedback(fShaders, "success", msg);
       }
       document.getElementById("dialog-feedback").textContent = msg;
     } catch (err) {
       if (fShaders) {
-        fShaders.className = "maint-feedback-inline error";
-        fShaders.textContent = `✗ Error: ${err}`;
+        setInlineFeedback(fShaders, "error", `Error: ${err}`);
       }
       document.getElementById("dialog-feedback").textContent = `Error: ${err}`;
     }
@@ -688,22 +697,19 @@ function setupModals() {
   document.getElementById("btn-rewrite-manifest").addEventListener("click", async () => {
     const fManifest = document.getElementById("feedback-manifest");
     if (fManifest) {
-      fManifest.className = "maint-feedback-inline loading";
-      fManifest.textContent = "⏳ Regenerando game_manifest.json...";
+      setInlineFeedback(fManifest, "loading", "Regenerando game_manifest.json...");
     }
     try {
       await invoke("rewrite_manifest");
-      const msg = "✓ game_manifest.json regenerado exitosamente.";
+      const msg = "game_manifest.json regenerado exitosamente.";
       if (fManifest) {
-        fManifest.className = "maint-feedback-inline success";
-        fManifest.textContent = msg;
+        setInlineFeedback(fManifest, "success", msg);
       }
       document.getElementById("dialog-feedback").textContent = msg;
       await refreshStatus();
     } catch (err) {
       if (fManifest) {
-        fManifest.className = "maint-feedback-inline error";
-        fManifest.textContent = `✗ Error: ${err}`;
+        setInlineFeedback(fManifest, "error", `Error: ${err}`);
       }
       document.getElementById("dialog-feedback").textContent = `Error: ${err}`;
     }

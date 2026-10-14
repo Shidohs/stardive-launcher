@@ -154,7 +154,7 @@
     <div class="m3-dialog">
       <div class="dialog-header">
         <h2 class="dialog-title">Configuración de Stardive Launcher</h2>
-        <button class="close-btn" id="close-settings">&times;</button>
+        <button class="close-btn" id="close-settings" title="Cerrar"><svg viewBox="0 0 24 24" class="svg-close"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
       </div>
 
       <div class="dialog-tabs">
@@ -171,7 +171,9 @@
             <label>Ruta del ejecutable de Proton / Wine:</label>
             <div class="input-with-action">
               <input type="text" id="cfg-proton" class="m3-input">
-              <button class="m3-icon-btn browse-btn" id="btn-browse-proton" type="button" data-tooltip="Explorar carpeta de Proton / Wine">📁</button>
+              <button class="m3-icon-btn browse-btn" id="btn-browse-proton" type="button" data-tooltip="Explorar carpeta de Proton / Wine">
+                <svg viewBox="0 0 24 24" class="svg-mini"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+              </button>
             </div>
             <div class="runner-chips" id="runner-chips-list">
               <!-- Dynamically populated runners -->
@@ -182,7 +184,9 @@
             <label>Ruta de Instalación del Juego:</label>
             <div class="input-with-action">
               <input type="text" id="cfg-game-dir" class="m3-input">
-              <button class="m3-icon-btn browse-btn" id="btn-browse-game-dir" type="button" data-tooltip="Explorar carpeta de instalación">📁</button>
+              <button class="m3-icon-btn browse-btn" id="btn-browse-game-dir" type="button" data-tooltip="Explorar carpeta de instalación">
+                <svg viewBox="0 0 24 24" class="svg-mini"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+              </button>
             </div>
           </div>
 
@@ -190,7 +194,9 @@
             <label>Ruta de Wine Prefix:</label>
             <div class="input-with-action">
               <input type="text" id="cfg-prefix-dir" class="m3-input">
-              <button class="m3-icon-btn browse-btn" id="btn-browse-prefix-dir" type="button" data-tooltip="Explorar carpeta de Wine Prefix">📁</button>
+              <button class="m3-icon-btn browse-btn" id="btn-browse-prefix-dir" type="button" data-tooltip="Explorar carpeta de Wine Prefix">
+                <svg viewBox="0 0 24 24" class="svg-mini"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm0 12H4V8h16v10z"/></svg>
+              </button>
             </div>
           </div>
 
@@ -343,7 +349,10 @@
             <input type="checkbox" id="cfg-film-grain">
           </label>
 
-          <button class="m3-btn-secondary" id="btn-apply-fps" style="margin-top: 14px;">⚡ Aplicar Ajustes al Motor Ahora</button>
+          <button class="m3-btn-secondary btn-with-icon" id="btn-apply-fps" style="margin-top: 14px;">
+            <svg viewBox="0 0 24 24" class="svg-btn"><path d="M7 2v11h3v9l7-12h-4l4-8H7z"/></svg>
+            <span>Aplicar Ajustes al Motor Ahora</span>
+          </button>
         </div>
 
         <!-- Tab 4: Mantenimiento -->
@@ -396,7 +405,7 @@
     <div class="m3-dialog dialog-sm">
       <div class="dialog-header">
         <h3 class="dialog-title">Desbloqueo Rápido de FPS</h3>
-        <button class="close-btn" id="close-quick-fps">&times;</button>
+        <button class="close-btn" id="close-quick-fps" title="Cerrar"><svg viewBox="0 0 24 24" class="svg-close"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
       </div>
       <div class="dialog-body">
         <p class="section-desc">Selecciona la tasa de cuadros objetivo para Unreal Engine 5:</p>
@@ -418,7 +427,7 @@
     <div class="m3-dialog dialog-lg">
       <div class="dialog-header">
         <h3 class="dialog-title">Registro de Ejecución (launcher_game.log)</h3>
-        <button class="close-btn" id="close-logs">&times;</button>
+        <button class="close-btn" id="close-logs" title="Cerrar"><svg viewBox="0 0 24 24" class="svg-close"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
       </div>
       <div class="dialog-body">
         <pre class="log-viewport" id="log-content">Cargando registros...</pre>
@@ -437,7 +446,7 @@
       <!-- Netmarble Brand Banner Top -->
       <div class="auth-dialog-top">
         <img src="https://sgimage.netmarble.com/images/netmarble/COMMON/20231130/dark_branding_top.png" alt="Netmarble" class="auth-brand-img" onerror="this.style.display='none'">
-        <button class="close-btn auth-close-btn" id="close-auth">&times;</button>
+        <button class="close-btn auth-close-btn" id="close-auth" title="Cerrar"><svg viewBox="0 0 24 24" class="svg-close"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
       </div>
 
       <!-- State 1: Provider Selection -->
@@ -531,7 +540,7 @@
     <div class="m3-dialog dialog-sm">
       <div class="dialog-header">
         <h3 class="dialog-title">Cuenta de Netmarble</h3>
-        <button class="close-btn" id="close-account">&times;</button>
+        <button class="close-btn" id="close-account" title="Cerrar"><svg viewBox="0 0 24 24" class="svg-close"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
       </div>
       <div class="dialog-body">
         <div class="account-card">

@@ -684,14 +684,19 @@ async function loadSettingsForm() {
     const radio = document.querySelector(`input[name="fps"][value="${fpsVal}"]`);
     if (radio) radio.checked = true;
 
-    // Populate auto-detected Proton runners
+    // Populate auto-detected Proton runners (deduplicados)
     const chipsContainer = document.getElementById("runner-chips-list");
     chipsContainer.innerHTML = "";
+    const seenNames = new Set();
     runners.forEach((r) => {
+      const parts = r.split("/");
+      const name = parts[parts.length - 1] || r;
+      if (seenNames.has(name)) return;
+      seenNames.add(name);
+
       const btn = document.createElement("button");
       btn.className = "runner-chip-btn";
-      const parts = r.split("/");
-      btn.textContent = `Usar ${parts[parts.length - 1]}`;
+      btn.textContent = `Usar ${name}`;
       btn.addEventListener("click", () => {
         document.getElementById("cfg-proton").value = r;
       });

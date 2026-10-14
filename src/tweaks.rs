@@ -28,6 +28,7 @@ impl SystemTweaks {
     /// Detect all installed Proton / Wine runners on the system
     pub fn detect_proton_runners() -> Vec<PathBuf> {
         let mut runners = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/shidox"));
 
         let search_dirs = [
@@ -50,17 +51,26 @@ impl SystemTweaks {
         ];
 
         for dir in &search_dirs {
-            if dir.exists() {
-                if let Ok(entries) = fs::read_dir(dir) {
+            let canonical_dir = fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
+            if canonical_dir.exists() {
+                if let Ok(entries) = fs::read_dir(&canonical_dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
-                        if path.is_dir() {
+                        let canonical_path =
+                            fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+                        if canonical_path.is_dir() {
                             // Check if it has a proton executable or wine executable
-                            if path.join("proton").exists()
-                                || path.join("files").join("bin").join("wine").exists()
-                                || path.join("bin").join("wine").exists()
+                            if canonical_path.join("proton").exists()
+                                || canonical_path
+                                    .join("files")
+                                    .join("bin")
+                                    .join("wine")
+                                    .exists()
+                                || canonical_path.join("bin").join("wine").exists()
                             {
-                                runners.push(path);
+                                if seen.insert(canonical_path.clone()) {
+                                    runners.push(canonical_path);
+                                }
                             }
                         }
                     }

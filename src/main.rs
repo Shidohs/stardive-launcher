@@ -827,7 +827,13 @@ async fn get_background_media(
 
     let cached_video_buf = if entry.video_url.starts_with("https://") {
         api_client
-            .cache_media_file(&entry.video_url, &cache_dir, &resolved_version, "video", "webm")
+            .cache_media_file(
+                &entry.video_url,
+                &cache_dir,
+                &resolved_version,
+                "video",
+                "webm",
+            )
             .await
             .ok()
     } else {
@@ -844,7 +850,13 @@ async fn get_background_media(
         }
     } else if entry.poster_url.starts_with("https://") {
         api_client
-            .cache_media_file(&entry.poster_url, &cache_dir, &resolved_version, "poster", "jpg")
+            .cache_media_file(
+                &entry.poster_url,
+                &cache_dir,
+                &resolved_version,
+                "poster",
+                "jpg",
+            )
             .await
             .ok()
     } else {

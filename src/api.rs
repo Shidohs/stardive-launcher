@@ -148,7 +148,6 @@ impl ApiClient {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackgroundSlide {
     pub tag: String,
@@ -190,16 +189,29 @@ const MAX_MEDIA_BYTES: usize = 50 * 1024 * 1024;
 fn sanitize_version_tag(version: &str) -> String {
     let cleaned: String = version
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
-    if cleaned.is_empty() { "default".to_string() } else { cleaned }
+    if cleaned.is_empty() {
+        "default".to_string()
+    } else {
+        cleaned
+    }
 }
 
 fn extension_for_media(url: &str, fallback: &str) -> String {
     let base = url.split('?').next().unwrap_or(url);
     if let Some(ext) = base.rsplit('.').next() {
         let lower = ext.to_ascii_lowercase();
-        if matches!(lower.as_str(), "mp4" | "webm" | "jpg" | "jpeg" | "png" | "webp") {
+        if matches!(
+            lower.as_str(),
+            "mp4" | "webm" | "jpg" | "jpeg" | "png" | "webp"
+        ) {
             return lower;
         }
     }
@@ -211,7 +223,11 @@ impl ApiClient {
         if let Some(entry) = manifest.versions.get(version) {
             return entry.clone();
         }
-        manifest.versions.get("default").cloned().unwrap_or_default()
+        manifest
+            .versions
+            .get("default")
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub async fn fetch_remote_manifest(&self, url: &str) -> Result<BackgroundManifest> {
@@ -225,7 +241,10 @@ impl ApiClient {
             .await
             .context("No se pudo descargar el manifiesto de fondos")?;
         if !resp.status().is_success() {
-            return Err(anyhow!("Manifiesto de fondos devolvió HTTP {}", resp.status()));
+            return Err(anyhow!(
+                "Manifiesto de fondos devolvió HTTP {}",
+                resp.status()
+            ));
         }
         let manifest: BackgroundManifest = resp
             .json()
@@ -249,13 +268,20 @@ impl ApiClient {
         let ext = extension_for_media(url, fallback_ext);
         let filename = format!("{}_{}.{}", sanitize_version_tag(version), kind, ext);
         let target = cache_dir.join(filename);
-        if target.exists() && std::fs::metadata(&target).map(|m| m.len() > 0).unwrap_or(false) {
+        if target.exists()
+            && std::fs::metadata(&target)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false)
+        {
             return Ok(target);
         }
 
         let resp = self.client.get(url).send().await?;
         if !resp.status().is_success() {
-            return Err(anyhow!("Descarga de medio falló con HTTP {}", resp.status()));
+            return Err(anyhow!(
+                "Descarga de medio falló con HTTP {}",
+                resp.status()
+            ));
         }
         if let Some(len) = resp.content_length() {
             if len as usize > MAX_MEDIA_BYTES {
@@ -273,9 +299,7 @@ impl ApiClient {
     }
 }
 
-
-pub const API_GAME_META_URL: &str =
-    "https://apis.netmarble.com/cpplauncher/api/games/monster2";
+pub const API_GAME_META_URL: &str = "https://apis.netmarble.com/cpplauncher/api/games/monster2";
 
 impl ApiClient {
     /// Parsea `mainBgVideoUrl` y `mainBgImageUrl` desde el JSON oficial del Netmarble Launcher
@@ -307,21 +331,22 @@ impl ApiClient {
     }
 
     pub async fn fetch_official_launcher_background(&self) -> Result<(String, String)> {
-        let resp = self
-            .client
-            .get(API_GAME_META_URL)
-            .send()
-            .await
-            .context("No se pudo conectar a la API oficial de metadatos del Netmarble Launcher")?;
+        let resp =
+            self.client.get(API_GAME_META_URL).send().await.context(
+                "No se pudo conectar a la API oficial de metadatos del Netmarble Launcher",
+            )?;
         if !resp.status().is_success() {
-            return Err(anyhow!("API oficial de metadatos devolvió HTTP {}", resp.status()));
+            return Err(anyhow!(
+                "API oficial de metadatos devolvió HTTP {}",
+                resp.status()
+            ));
         }
         let json: serde_json::Value = resp.json().await?;
-        Self::parse_launcher_game_meta(&json)
-            .ok_or_else(|| anyhow!("No se encontraron mainBgVideoUrl/mainBgImageUrl en la API oficial"))
+        Self::parse_launcher_game_meta(&json).ok_or_else(|| {
+            anyhow!("No se encontraron mainBgVideoUrl/mainBgImageUrl en la API oficial")
+        })
     }
 }
-
 
 fn is_latin_title(title: &str) -> bool {
     let mut ascii_letters = 0usize;
@@ -359,16 +384,15 @@ fn summarize_forum_content(content: &str) -> String {
 }
 
 impl ApiClient {
-    async fn fetch_forum_board_latest(
-        &self,
-        menu_seq: u32,
-        tag: &str,
-    ) -> Option<BackgroundSlide> {
+    async fn fetch_forum_board_latest(&self, menu_seq: u32, tag: &str) -> Option<BackgroundSlide> {
         let url = format!(
             "https://forum.netmarble.com/api/game/monster2/official/forum/stardive_gl/article/list?rows=9&start=0&menuSeq={}",
             menu_seq
         );
-        let referer = format!("https://forum.netmarble.com/stardive_gl/list/{}/1", menu_seq);
+        let referer = format!(
+            "https://forum.netmarble.com/stardive_gl/list/{}/1",
+            menu_seq
+        );
         let resp = self
             .client
             .get(&url)
@@ -395,7 +419,10 @@ impl ApiClient {
             tag: tag.to_string(),
             title,
             desc: summarize_forum_content(content),
-            url: format!("https://forum.netmarble.com/stardive_gl/view/{}/{}", menu_seq, id),
+            url: format!(
+                "https://forum.netmarble.com/stardive_gl/view/{}/{}",
+                menu_seq, id
+            ),
         })
     }
 
@@ -445,8 +472,14 @@ mod tests {
                 "default": { "video_url": "", "poster_url": "https://cdn.example.com/default.jpg", "slides": [] }
             }
         }"#).unwrap();
-        assert_eq!(ApiClient::resolve_manifest_entry(&manifest, "1.05.00").video_url, "https://cdn.example.com/105.mp4");
-        assert_eq!(ApiClient::resolve_manifest_entry(&manifest, "9.99.00").poster_url, "https://cdn.example.com/default.jpg");
+        assert_eq!(
+            ApiClient::resolve_manifest_entry(&manifest, "1.05.00").video_url,
+            "https://cdn.example.com/105.mp4"
+        );
+        assert_eq!(
+            ApiClient::resolve_manifest_entry(&manifest, "9.99.00").poster_url,
+            "https://cdn.example.com/default.jpg"
+        );
     }
 
     #[test]

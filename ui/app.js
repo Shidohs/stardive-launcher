@@ -945,6 +945,14 @@ function setupBackgroundLifecycle() {
   document.addEventListener("visibilitychange", syncBackgroundPlayback);
 }
 
+function toLocalAssetUrl(filePath) {
+  if (!filePath) return "";
+  if (window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.convertFileSrc === "function") {
+    return window.__TAURI__.core.convertFileSrc(filePath);
+  }
+  return "";
+}
+
 async function loadDynamicBackground() {
   const video = document.getElementById("bg-video");
   const bgArt = document.getElementById("bg-art");
@@ -977,7 +985,8 @@ async function loadDynamicBackground() {
 
   bgAnimatedEnabled = media ? media.animated !== false : true;
 
-  const resolvedPoster = (media && media.poster_url) ? media.poster_url : "assets/bg.jpg";
+  const localPoster = (media && media.cached_poster_path) ? toLocalAssetUrl(media.cached_poster_path) : "";
+  const resolvedPoster = localPoster || (media && media.poster_url) || "assets/bg.jpg";
   if (bgArt) {
     bgArt.style.backgroundImage = `url('${resolvedPoster}')`;
     bgArt.classList.add("ready");
@@ -992,7 +1001,8 @@ async function loadDynamicBackground() {
   }
 
   if (video) {
-    const srcUrl = (bgAnimatedEnabled && media && media.video_url) ? media.video_url : "";
+    const localVideo = (media && media.cached_video_path) ? toLocalAssetUrl(media.cached_video_path) : "";
+    const srcUrl = bgAnimatedEnabled ? (localVideo || (media && media.video_url) || "") : "";
     if (srcUrl) {
       if (video.getAttribute("data-src") !== srcUrl) {
         video.classList.remove("ready");

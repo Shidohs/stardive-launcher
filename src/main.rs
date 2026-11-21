@@ -730,22 +730,69 @@ fn logout(app_handle: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Re
 
 const DEFAULT_BG_MANIFEST_JSON: &str = include_str!("../ui/backgrounds.json");
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MediaCacheMeta {
+    version: String,
+    video_path: Option<String>,
+    poster_path: Option<String>,
+    slides: Vec<api::BackgroundSlide>,
+}
+
+fn extract_video_frame0(video_path: &std::path::Path, poster_path: &std::path::Path) -> bool {
+    std::process::Command::new("ffmpeg")
+        .args(["-y", "-v", "error", "-i"])
+        .arg(video_path)
+        .args(["-vframes", "1", "-q:v", "2"])
+        .arg(poster_path)
+        .status()
+        .map(|s| s.success() && poster_path.exists())
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 async fn get_background_media(
     version: Option<String>,
 ) -> Result<api::ResolvedBackgroundMedia, String> {
     let config = LauncherConfig::load().unwrap_or_default();
-    let api_client = api::ApiClient::new();
+    let cache_dir = LauncherConfig::app_media_cache_dir();
+    let meta_path = cache_dir.join("cache_meta.json");
 
     let resolved_version = match version.filter(|v| !v.trim().is_empty()) {
         Some(v) => v,
-        None => api_client
-            .fetch_build_info()
-            .await
-            .map(|b| b.version)
-            .unwrap_or_else(|_| "default".to_string()),
+        None => {
+            let api_client = api::ApiClient::new();
+            api_client
+                .fetch_build_info()
+                .await
+                .map(|b| b.version)
+                .unwrap_or_else(|_| "default".to_string())
+        }
     };
 
+    // 1. CACHE-FIRST: si ya tenemos esta versión en disco, devolvemos inmediato sin llamar a la API
+    if let Ok(raw) = std::fs::read_to_string(&meta_path) {
+        if let Ok(cached) = serde_json::from_str::<MediaCacheMeta>(&raw) {
+            let video_ok = cached
+                .video_path
+                .as_ref()
+                .map(|p| std::path::Path::new(p).exists())
+                .unwrap_or(false);
+            if cached.version == resolved_version && video_ok {
+                return Ok(api::ResolvedBackgroundMedia {
+                    version: cached.version,
+                    animated: config.animated_background,
+                    video_url: String::new(),
+                    poster_url: String::new(),
+                    cached_video_path: cached.video_path,
+                    cached_poster_path: cached.poster_path,
+                    slides: cached.slides,
+                });
+            }
+        }
+    }
+
+    // 2. VERSIÓN NUEVA O CACHÉ VACÍA: consultar API oficial una sola vez y guardar localmente
+    let api_client = api::ApiClient::new();
     let manifest = if !config.background_manifest_url.trim().is_empty() {
         match api_client
             .fetch_remote_manifest(config.background_manifest_url.trim())
@@ -760,7 +807,6 @@ async fn get_background_media(
 
     let mut entry = api::ApiClient::resolve_manifest_entry(&manifest, &resolved_version);
 
-    // Auto-descubrimiento en vivo: video oficial + noticias reales del foro de Netmarble
     if config.background_manifest_url.trim().is_empty() {
         let (bg_res, forum_slides) = tokio::join!(
             api_client.fetch_official_launcher_background(),
@@ -779,27 +825,48 @@ async fn get_background_media(
         }
     }
 
-    let cache_dir = LauncherConfig::app_media_cache_dir();
-
-    let cached_video_path = if config.animated_background && entry.video_url.starts_with("https://") {
+    let cached_video_buf = if entry.video_url.starts_with("https://") {
         api_client
-            .cache_media_file(&entry.video_url, &cache_dir, &resolved_version, "video", "mp4")
+            .cache_media_file(&entry.video_url, &cache_dir, &resolved_version, "video", "webm")
             .await
             .ok()
-            .map(|p| p.to_string_lossy().to_string())
     } else {
         None
     };
 
-    let cached_poster_path = if entry.poster_url.starts_with("https://") {
+    // Extraer fotograma 0 del video descargado como póster local exacto (cero saltos visuales)
+    let cached_poster_buf = if let Some(ref vid) = cached_video_buf {
+        let poster_target = vid.with_extension("jpg");
+        if poster_target.exists() || extract_video_frame0(vid, &poster_target) {
+            Some(poster_target)
+        } else {
+            None
+        }
+    } else if entry.poster_url.starts_with("https://") {
         api_client
             .cache_media_file(&entry.poster_url, &cache_dir, &resolved_version, "poster", "jpg")
             .await
             .ok()
-            .map(|p| p.to_string_lossy().to_string())
     } else {
         None
     };
+
+    let cached_video_path = cached_video_buf.map(|p| p.to_string_lossy().to_string());
+    let cached_poster_path = cached_poster_buf.map(|p| p.to_string_lossy().to_string());
+
+    // Persistir cache_meta.json para futuros arranques instantáneos sin tocar red
+    if cached_video_path.is_some() || cached_poster_path.is_some() {
+        let _ = std::fs::create_dir_all(&cache_dir);
+        let meta = MediaCacheMeta {
+            version: resolved_version.clone(),
+            video_path: cached_video_path.clone(),
+            poster_path: cached_poster_path.clone(),
+            slides: entry.slides.clone(),
+        };
+        if let Ok(json) = serde_json::to_string_pretty(&meta) {
+            let _ = std::fs::write(&meta_path, json);
+        }
+    }
 
     Ok(api::ResolvedBackgroundMedia {
         version: resolved_version,

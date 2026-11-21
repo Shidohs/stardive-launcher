@@ -26,7 +26,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Check Formatting
-        run: cargo fmt --all -- --check || true
+        run: cargo fmt --all -- --check
 
-      - name: Cargo Check
-        run: cargo check --verbose
+      - name: Cargo Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Cargo Test
+        run: cargo test --locked

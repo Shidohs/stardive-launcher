@@ -9,8 +9,6 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 const NM_API_BASE: &str = "https://apis.netmarble.com/cpplauncher/api/external";
-#[allow(dead_code)]
-pub const NM_MEMBERS_AUTH_URL: &str = "https://members.netmarble.com/auth";
 pub const NM_CLIENT_ID: &str = "mq5RG0PGw6ipw35A";
 const NM_LAUNCHER_CH: &str = "ypWjRL2aNi";
 const NM_LAUNCHER_VER: &str = "1.7.0";
@@ -30,7 +28,7 @@ pub struct AuthSession {
     pub refresh_token: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AuthStatusPayload {
     pub is_logged_in: bool,
     pub channel: String,
@@ -38,19 +36,6 @@ pub struct AuthStatusPayload {
     pub profile_name: String,
     pub profile_img_url: String,
     pub expires_at: i64,
-}
-
-impl Default for AuthStatusPayload {
-    fn default() -> Self {
-        Self {
-            is_logged_in: false,
-            channel: String::new(),
-            player_id: String::new(),
-            profile_name: String::new(),
-            profile_img_url: String::new(),
-            expires_at: 0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -67,22 +52,6 @@ pub struct NetmarbleUserData {
     pub accessed_channel_code: Option<u32>,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChannelPayload {
-    pub channel: String,
-    #[serde(rename = "idToken", default)]
-    pub id_token: Option<String>,
-    #[serde(rename = "googleClientId", default)]
-    pub google_client_id: Option<String>,
-    #[serde(rename = "accessToken", default)]
-    pub access_token: Option<String>,
-    #[serde(rename = "user", default)]
-    pub user: Option<String>,
-    #[serde(rename = "code", default)]
-    pub code: Option<String>,
-}
-
 #[derive(Debug, Deserialize)]
 struct NetmarbleApiResponse<T> {
     pub code: i32,
@@ -94,9 +63,6 @@ struct NetmarbleApiResponse<T> {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct GameProfileData {
-    #[allow(dead_code)]
-    #[serde(default, rename = "playerId")]
-    pub player_id: Option<String>,
     #[serde(default, rename = "profileName")]
     pub profile_name: Option<String>,
     #[serde(default, rename = "profileImgURL")]
@@ -107,31 +73,9 @@ pub struct AuthManager;
 
 impl AuthManager {
     pub fn auth_file_path() -> PathBuf {
-        let config_dir = dirs::config_dir()
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("/home/shidox"))
-                    .join(".config")
-            })
-            .join("stardive-launcher");
+        let config_dir = crate::config::LauncherConfig::app_config_dir();
         let _ = fs::create_dir_all(&config_dir);
         config_dir.join("auth.json")
-    }
-
-    /// Lee el `NMDeviceKey` del prefijo de Wine.
-    ///
-    /// IMPORTANTE: El `nmDeviceKey` que el juego envía a la API de Netmarble NO es
-    /// lo mismo que el `deviceKey` (UUID del launcher). Es una clave generada por el
-    /// SDK del juego (`NMSDKService`) y guardada en la sección `Netmarble dev\monster2`
-    /// del registro, bajo el nombre `DeviceKey` (32 hex, formato MD5).
-    ///
-    /// El servidor de Netmarble valida esta combinación al emitir/refrescar tokens:
-    /// `{"deviceKey": <uuid-del-launcher>, "nmDeviceKey": <md5-del-sdk>}` → HTTP 200.
-    ///
-    /// Descubierto empíricamente contra la API real de Netmarble (2026-09-11).
-    #[allow(dead_code)]
-    pub fn read_nm_device_key_from_wine_registry() -> Option<String> {
-        Self::for_each_user_reg(Self::parse_nm_device_key_from_reg_content)
     }
 
     /// Lee el `NMDeviceKey` de la sección `Netmarble\NetmarbleSDK` (el UUID del
@@ -141,12 +85,7 @@ impl AuthManager {
         Self::for_each_user_reg(Self::parse_launcher_device_key_from_reg_content)
     }
 
-    /// Extrae el `nmDeviceKey` (MD5 del SDK del juego) del contenido de un `user.reg`.
-    ///
-    /// Busca en la sección `[Software\\Netmarble dev\\monster2]` la clave `DeviceKey`.
-    /// Esta clave la escribe el propio SDK (`NMSDKService`) del juego la primera vez
-    /// que corre, y es la que el servidor de Netmarble valida como `nmDeviceKey`.
-    /// Función pura → testeable sin disco.
+    #[cfg(test)]
     fn parse_nm_device_key_from_reg_content(content: &str) -> Option<String> {
         Self::find_value_in_reg_section(
             content,
@@ -213,14 +152,7 @@ impl AuthManager {
     /// Iterador de candidatos al `user.reg` del prefijo (config + fallbacks).
     /// Aplica `f` a cada contenido legible y retorna el primer `Some`.
     fn for_each_user_reg<F: FnMut(&str) -> Option<String>>(mut f: F) -> Option<String> {
-        let cfg_path = dirs::config_dir()
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("/home/shidox"))
-                    .join(".config")
-            })
-            .join("stardive-launcher")
-            .join("config.json");
+        let cfg_path = crate::config::LauncherConfig::config_file_path();
 
         let prefix = fs::read_to_string(&cfg_path)
             .ok()
@@ -254,14 +186,7 @@ impl AuthManager {
     }
 
     pub fn get_or_create_device_key() -> String {
-        let path = dirs::config_dir()
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("/home/shidox"))
-                    .join(".config")
-            })
-            .join("stardive-launcher")
-            .join("device_key");
+        let path = crate::config::LauncherConfig::app_config_dir().join("device_key");
 
         // 1) ADOPTAR el UUID del launcher almacenado en `Netmarble\NetmarbleSDK` →
         //    `NMDeviceKey`. Es el que va en el campo `deviceKey` de las llamadas
@@ -313,15 +238,38 @@ impl AuthManager {
     }
 
     pub fn save_session(session: &AuthSession) -> Result<()> {
+        let path = Self::auth_file_path();
+        Self::save_session_to_path(&path, session)
+    }
+
+    pub fn save_session_to_path(path: &std::path::Path, session: &AuthSession) -> Result<()> {
         if session.launcher_token.starts_with('/') || session.launcher_token.len() < 20 {
             return Err(anyhow!(
                 "Rechazado guardado de sesión con token inválido ('{}')",
                 session.launcher_token
             ));
         }
-        let path = Self::auth_file_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
         let json = serde_json::to_string_pretty(session)?;
-        fs::write(path, json)?;
+        #[cfg(unix)]
+        {
+            use std::io::Write;
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            let mut file = fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(path)?;
+            file.write_all(json.as_bytes())?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+        #[cfg(not(unix))]
+        {
+            fs::write(path, json)?;
+        }
         Ok(())
     }
 
@@ -333,185 +281,41 @@ impl AuthManager {
         Ok(())
     }
 
+    pub fn status_from_session(session: &AuthSession) -> AuthStatusPayload {
+        AuthStatusPayload {
+            is_logged_in: true,
+            channel: session.channel.clone(),
+            player_id: session.player_id.clone(),
+            profile_name: session.profile_name.clone(),
+            profile_img_url: session.profile_img_url.clone(),
+            expires_at: session.expires_at,
+        }
+    }
+
     pub fn get_status() -> AuthStatusPayload {
         if let Ok(Some(session)) = Self::load_session() {
-            AuthStatusPayload {
-                is_logged_in: true,
-                channel: session.channel,
-                player_id: session.player_id,
-                profile_name: session.profile_name,
-                profile_img_url: session.profile_img_url,
-                expires_at: session.expires_at,
-            }
+            Self::status_from_session(&session)
         } else {
             AuthStatusPayload::default()
         }
     }
 
-    /// Canjea los tokens del proveedor (Google, Email, Apple) por el token del launcher (JWT).
-    ///
-    /// IMPORTANTE: la API de Netmarble exige DOS claves de dispositivo en el body:
-    ///   - `deviceKey`: el UUID del launcher (`NMDeviceKey` de `Netmarble\NetmarbleSDK`).
-    ///   - `nmDeviceKey`: el MD5 que el SDK del juego escribió en
-    ///     `Netmarble dev\monster2` → `DeviceKey`.
-    ///
-    /// Si `nmDeviceKey` falta o está mal, el servidor responde `1210 invalid device key`
-    /// aunque el resto del body sea correcto. Descubierto empíricamente (2026-09-11).
-    #[allow(dead_code)]
-    pub async fn exchange_channel_token(
-        payload: &ChannelPayload,
-        device_key: &str,
-        nm_device_key: &str,
-    ) -> Result<AuthSession> {
-        let client = reqwest::Client::builder().build()?;
-        let url = format!("{}/cpp-auth/game/{}/token", NM_API_BASE, GAME_CODE);
-
-        let (channel_code, req_body) = match payload.channel.as_str() {
-            "google" => {
-                let id_token = payload
-                    .id_token
-                    .as_deref()
-                    .ok_or_else(|| anyhow!("idToken faltante para Google"))?;
-                let client_id = payload.google_client_id.as_deref().unwrap_or_default();
-                (
-                    29u32,
-                    serde_json::json!({
-                        "deviceKey": device_key,
-                        "nmDeviceKey": nm_device_key,
-                        "channelCode": 29,
-                        "googleIdToken": id_token,
-                        "googleClientId": client_id,
-                        "googlePlayerId": ""
-                    }),
-                )
-            }
-            "email" => {
-                let access_token = payload
-                    .access_token
-                    .as_deref()
-                    .ok_or_else(|| anyhow!("accessToken faltante para Correo Netmarble"))?;
-                (
-                    20u32,
-                    serde_json::json!({
-                        "deviceKey": device_key,
-                        "nmDeviceKey": nm_device_key,
-                        "channelCode": 20,
-                        "channelAccessToken": access_token
-                    }),
-                )
-            }
-            "apple" => {
-                let id_token = payload
-                    .id_token
-                    .as_deref()
-                    .ok_or_else(|| anyhow!("idToken faltante para Apple"))?;
-                (
-                    26u32,
-                    serde_json::json!({
-                        "deviceKey": device_key,
-                        "nmDeviceKey": nm_device_key,
-                        "channelCode": 26,
-                        "user": payload.user.as_deref().unwrap_or_default(),
-                        "authorizationCode": payload.code.as_deref().unwrap_or_default(),
-                        "identityToken": id_token
-                    }),
-                )
-            }
-            other => return Err(anyhow!("Canal de autenticación desconocido: {}", other)),
-        };
-
-        println!(
-            "Canjeando token con Netmarble Auth (Canal: {})...",
-            payload.channel
-        );
-
-        let resp = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .header("X-NM-LAUNCHER-CH", NM_LAUNCHER_CH)
-            .header("X-NM-LAUNCHER-LANG", "es")
-            .header("X-NM-LAUNCHER-OS", "windows")
-            .header("X-NM-LAUNCHER-OS-VERSION", "10.0.19045")
-            .header("X-NM-LAUNCHER-ARCH", "x64")
-            .header("X-NM-LAUNCHER-VER", NM_LAUNCHER_VER)
-            .header("X-NM-LAUNCHER-SER-TY", "nm")
-            .json(&req_body)
-            .send()
-            .await
-            .context("Fallo en la petición HTTP a cpp-auth/token")?;
-
-        let status = resp.status();
-        let text = resp.text().await.context("Fallo al leer respuesta HTTP")?;
-
-        if !status.is_success() {
-            return Err(anyhow!("Netmarble API devolvió HTTP {}: {}", status, text));
-        }
-
-        let api_resp: NetmarbleApiResponse<String> = serde_json::from_str(&text)
-            .with_context(|| format!("Respuesta no válida de Netmarble API: {}", text))?;
-
-        if api_resp.code != 0 {
-            return Err(anyhow!(
-                "Error de Netmarble Auth (Código {}): {}",
-                api_resp.code,
-                api_resp
-                    .msg
-                    .unwrap_or_else(|| "Error desconocido".to_string())
-            ));
-        }
-
-        let launcher_token = api_resp
-            .data
-            .ok_or_else(|| anyhow!("No se recibió launcherToken en la respuesta de Netmarble"))?;
-
-        // Decodificar JWT para claims (expiración, player_id / sub)
-        let (player_id, expires_at) = Self::decode_jwt_claims(&launcher_token);
-
-        // Consultar el perfil del jugador
-        let profile = Self::fetch_game_profile(&client, &launcher_token)
-            .await
-            .ok();
-        let profile_name = profile
-            .as_ref()
-            .and_then(|p| p.profile_name.clone())
-            .unwrap_or_else(|| {
-                if !player_id.is_empty() {
-                    format!("Piloto #{}", &player_id[..player_id.len().min(6)])
-                } else {
-                    "Piloto Estelar".to_string()
-                }
-            });
-
-        let profile_img_url = profile
-            .as_ref()
-            .and_then(|p| p.profile_img_url.clone())
-            .unwrap_or_default();
-
-        let session = AuthSession {
-            launcher_token,
-            channel: payload.channel.clone(),
-            channel_code,
-            player_id,
-            profile_name,
-            profile_img_url,
-            expires_at,
-            device_key: device_key.to_string(),
-            refresh_token: None,
-        };
-
-        Self::save_session(&session)?;
-        println!(
-            "✓ ¡Sesión oficial de Netmarble guardada con éxito para {}!",
-            session.profile_name
-        );
-
-        Ok(session)
+    /// Procesa cualquier token, URL de callback, deeplink o JSON recibido del sistema oficial NM
+    #[cfg(test)]
+    pub async fn process_auth_result(raw_input: &str) -> Result<AuthSession> {
+        Self::process_auth_result_with_persist(raw_input, true).await
     }
 
-    /// Procesa cualquier token, URL de callback, deeplink o JSON recibido del sistema oficial NM
-    pub async fn process_auth_result(raw_input: &str) -> Result<AuthSession> {
+    /// Procesa cualquier token/callback y opcionalmente persiste en `auth.json` (`persist = true`)
+    pub async fn process_auth_result_with_persist(
+        raw_input: &str,
+        persist: bool,
+    ) -> Result<AuthSession> {
         let trimmed = raw_input.trim();
-        let client = reqwest::Client::builder().build()?;
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()?;
 
         let mut access_token = String::new();
         let mut refresh_token: Option<String> = None;
@@ -600,9 +404,11 @@ impl AuthManager {
         }
 
         // Consultar usuario real de Netmarble Members (netmarble-auth/user)
-        let user_data = Self::fetch_netmarble_user(&client, &access_token)
-            .await
-            .ok();
+        let user_data = Some(
+            Self::fetch_netmarble_user(&client, &access_token)
+                .await
+                .context("Token rechazado o no verificable contra Netmarble Members API")?,
+        );
 
         // Consultar perfil de juego si existe personaje creado en monster2
         let game_profile = Self::fetch_game_profile(&client, &access_token).await.ok();
@@ -629,10 +435,8 @@ impl AuthManager {
             })
             .unwrap_or_else(|| {
                 if !final_nid.is_empty() {
-                    format!(
-                        "Cuenta Netmarble ({})",
-                        &final_nid[..final_nid.len().min(8)]
-                    )
+                    let short_nid: String = final_nid.chars().take(8).collect();
+                    format!("Cuenta Netmarble ({})", short_nid)
                 } else {
                     "Cuenta Netmarble".to_string()
                 }
@@ -685,19 +489,21 @@ impl AuthManager {
             refresh_token,
         };
 
-        Self::save_session(&session)?;
-        println!(
-            "✓ ¡Sesión oficial NM guardada con éxito para {}!",
-            session.profile_name
-        );
+        if persist {
+            Self::save_session(&session)?;
+            println!(
+                "✓ ¡Sesión oficial NM guardada con éxito para {}!",
+                session.profile_name
+            );
+        } else {
+            let _ = Self::clear_session();
+            println!(
+                "✓ ¡Sesión oficial NM iniciada en memoria (sin persistir) para {}!",
+                session.profile_name
+            );
+        }
 
         Ok(session)
-    }
-
-    /// Permite procesar directamente un token de lanzador ya emitido o pegado manualmente
-    #[allow(dead_code)]
-    pub async fn direct_token_login(launcher_token: &str) -> Result<AuthSession> {
-        Self::process_auth_result(launcher_token).await
     }
 
     /// Consulta datos del usuario oficial a Netmarble Members API (netmarble-auth/user)
@@ -717,13 +523,12 @@ impl AuthManager {
             .await?;
 
         let api_resp: NetmarbleApiResponse<NetmarbleUserData> = resp.json().await?;
-        if api_resp.code == 0 && api_resp.data.is_some() {
-            Ok(api_resp.data.unwrap())
-        } else {
-            Err(anyhow!(
+        match (api_resp.code, api_resp.data) {
+            (0, Some(data)) => Ok(data),
+            _ => Err(anyhow!(
                 "No se pudo obtener datos de usuario: {}",
                 api_resp.msg.unwrap_or_default()
-            ))
+            )),
         }
     }
 
@@ -747,10 +552,9 @@ impl AuthManager {
             .await?;
 
         let api_resp: NetmarbleApiResponse<GameProfileData> = resp.json().await?;
-        if api_resp.code == 0 && api_resp.data.is_some() {
-            Ok(api_resp.data.unwrap())
-        } else {
-            Err(anyhow!("Sin personaje creado aún"))
+        match (api_resp.code, api_resp.data) {
+            (0, Some(data)) => Ok(data),
+            _ => Err(anyhow!("Sin personaje creado aún")),
         }
     }
 
@@ -778,6 +582,17 @@ impl AuthManager {
 
     /// Construye la URL oficial de SSO de Netmarble Members (NM) para abrir en el navegador
     pub fn build_auth_url(channel: &str, port: u16, lang: &str) -> String {
+        let device_key = Self::get_or_create_device_key();
+        Self::build_auth_url_with_device_key(channel, port, lang, &device_key)
+    }
+
+    /// Variante pura sin efectos secundarios en disco (útil para pruebas unitarias)
+    pub fn build_auth_url_with_device_key(
+        channel: &str,
+        port: u16,
+        lang: &str,
+        device_key: &str,
+    ) -> String {
         let language = match lang {
             "es" | "es_ES" | "es-ES" => "es",
             "en" | "en_US" | "en-US" => "en",
@@ -787,7 +602,6 @@ impl AuthManager {
             _ => "es",
         };
 
-        let device_key = Self::get_or_create_device_key();
         let redirect_url = format!("http%3A%2F%2F127.0.0.1%3A{}%2FredirectLauncher", port);
 
         let idp_param = match channel {
@@ -802,9 +616,30 @@ impl AuthManager {
         )
     }
 
+    /// Verifica que la cabecera Origin de un upgrade WebSocket provenga de Netmarble o localhost
+    fn is_allowed_ws_origin(peek_http: &str) -> bool {
+        let origin_line = peek_http
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("origin:"));
+        let Some(line) = origin_line else {
+            return true;
+        };
+        let origin = line
+            .split_once(':')
+            .map(|(_, v)| v.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+
+        origin == "https://members.netmarble.com"
+            || origin.ends_with(".netmarble.com") && origin.starts_with("https://")
+            || origin.starts_with("http://127.0.0.1")
+            || origin.starts_with("http://localhost")
+    }
+
     /// Inicia el servidor HTTP / WebSocket en 127.0.0.1:port para esperar el callback del navegador
     pub async fn listen_for_auth_callback(
         port: u16,
+        cancel_notify: Arc<tokio::sync::Notify>,
+        persist: bool,
     ) -> Result<(u16, tokio::sync::oneshot::Receiver<AuthSession>)> {
         let addr = format!("127.0.0.1:{}", port);
         let listener = match TcpListener::bind(&addr).await {
@@ -818,6 +653,7 @@ impl AuthManager {
         let bound_port = listener.local_addr()?.port();
         let (tx, rx) = tokio::sync::oneshot::channel();
         let tx_mutex = Arc::new(Mutex::new(Some(tx)));
+        let done_notify = Arc::new(tokio::sync::Notify::new());
 
         tokio::spawn(async move {
             println!("Servidor de autenticación local escuchando en http://127.0.0.1:{}/redirectLauncher y ws://", bound_port);
@@ -828,10 +664,19 @@ impl AuthManager {
 
             loop {
                 tokio::select! {
+                    _ = cancel_notify.notified() => {
+                        println!("Servidor de autenticación local cancelado.");
+                        break;
+                    }
+                    _ = done_notify.notified() => {
+                        println!("Servidor de autenticación local cerrado tras completar sesión.");
+                        break;
+                    }
                     accept_res = listener.accept() => {
                         match accept_res {
                             Ok((mut stream, _peer)) => {
                                 let tx_inner = tx_mutex.clone();
+                                let done_inner = done_notify.clone();
                                 tokio::spawn(async move {
                                     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -845,17 +690,24 @@ impl AuthManager {
                                     let is_websocket = peek_str.to_ascii_lowercase().contains("upgrade: websocket");
 
                                     if is_websocket {
+                                        if !Self::is_allowed_ws_origin(&peek_str) {
+                                            let forbidden = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                                            let _ = stream.write_all(forbidden.as_bytes()).await;
+                                            let _ = stream.flush().await;
+                                            return;
+                                        }
                                         if let Ok(mut ws_stream) = tokio_tungstenite::accept_async(stream).await {
                                             while let Some(msg_res) = ws_stream.next().await {
                                                 if let Ok(msg) = msg_res {
                                                     if msg.is_text() {
                                                         let text = msg.to_text().unwrap_or_default();
-                                                        println!("Mensaje recibido del navegador en WebSocket: {}", text);
+                                                        println!("Mensaje de autenticación recibido por WebSocket (contenido redactado).");
 
-                                                        if let Ok(session) = Self::process_auth_result(text).await {
+                                                        if let Ok(session) = Self::process_auth_result_with_persist(text, persist).await {
                                                             let mut opt = tx_inner.lock().await;
                                                             if let Some(sender) = opt.take() {
                                                                 let _ = sender.send(session);
+                                                                done_inner.notify_one();
                                                             }
                                                             break;
                                                         }
@@ -911,7 +763,7 @@ impl AuthManager {
 </html>"#;
 
                                         let http_response = format!(
-                                            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                                            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                                             html_body.len(),
                                             html_body
                                         );
@@ -920,11 +772,15 @@ impl AuthManager {
                                         let _ = stream.flush().await;
 
                                         if is_auth_request {
-                                            println!("Petición HTTP de autenticación recibida: {}", target);
-                                            if let Ok(session) = Self::process_auth_result(target).await {
+                                            println!("Petición HTTP de autenticación recibida en /redirectLauncher (parámetros redactados).");
+                                            if let Ok(session) =
+                                                Self::process_auth_result_with_persist(target, persist)
+                                                    .await
+                                            {
                                                 let mut opt = tx_inner.lock().await;
                                                 if let Some(sender) = opt.take() {
                                                     let _ = sender.send(session);
+                                                    done_inner.notify_one();
                                                 }
                                             }
                                         }
@@ -1036,7 +892,12 @@ WINE REGISTRY Version 2
 
     #[test]
     fn build_auth_url_incluye_web_redirect_y_soporte_token() {
-        let url = AuthManager::build_auth_url("google", 55000, "es");
+        let url = AuthManager::build_auth_url_with_device_key(
+            "google",
+            55000,
+            "es",
+            "test-device-key-isolated",
+        );
         assert!(
             url.contains("webViewType=web"),
             "Debe usar webViewType=web para redirección estándar de navegador"
@@ -1081,5 +942,41 @@ WINE REGISTRY Version 2
             refresh_token: None,
         };
         assert!(AuthManager::save_session(&bad_session).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_session_crea_archivo_con_permisos_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp =
+            std::env::temp_dir().join(format!("stardive_auth_perm_{}.json", std::process::id()));
+        let valid_session = super::AuthSession {
+            launcher_token: "eyJhbGciOiJIUzI1NiJ9.payload_token_1234567890.sig".to_string(),
+            channel: "email".to_string(),
+            channel_code: 20,
+            player_id: "pid-1".to_string(),
+            profile_name: "Test".to_string(),
+            profile_img_url: String::new(),
+            expires_at: 0,
+            device_key: "dev".to_string(),
+            refresh_token: None,
+        };
+        AuthManager::save_session_to_path(&tmp, &valid_session).unwrap();
+        let mode = std::fs::metadata(&tmp).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn ws_origin_valida_solo_netmarble_o_localhost() {
+        assert!(AuthManager::is_allowed_ws_origin(
+            "GET / HTTP/1.1\r\nOrigin: https://members.netmarble.com\r\n"
+        ));
+        assert!(AuthManager::is_allowed_ws_origin(
+            "GET / HTTP/1.1\r\nOrigin: http://127.0.0.1:55000\r\n"
+        ));
+        assert!(!AuthManager::is_allowed_ws_origin(
+            "GET / HTTP/1.1\r\nOrigin: https://evil.example.com\r\n"
+        ));
     }
 }

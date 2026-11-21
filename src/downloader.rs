@@ -1,139 +1,13 @@
 use anyhow::{anyhow, Context, Result};
-use futures_util::StreamExt;
 use md5::{Digest as Md5Digest, Md5};
-use rayon::prelude::*;
 use reqwest::header::RANGE;
-use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use tauri::ipc::Channel;
 use tokio::sync::mpsc::Sender;
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase", tag = "event", content = "data")]
-pub enum DownloadEvent {
-    Progress { downloaded: u64, total: u64 },
-    Finished { path: String },
-    Error { message: String },
-}
-
-#[derive(Deserialize)]
-pub struct FileManifestItem {
-    pub relative_path: String,
-    pub expected_sha256: String,
-}
-
-#[tauri::command]
-pub async fn download_with_resume(
-    url: String,
-    dest_path: PathBuf,
-    on_event: Channel<DownloadEvent>,
-) -> Result<(), String> {
-    if let Some(parent) = dest_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-
-    let part_path = dest_path.with_extension("part");
-    let client = reqwest::Client::new();
-    let mut downloaded = fs::metadata(&part_path)
-        .map(|metadata| metadata.len())
-        .unwrap_or(0);
-
-    let mut request = client.get(&url);
-    if downloaded > 0 {
-        request = request.header(RANGE, format!("bytes={downloaded}-"));
-    }
-
-    let response = request.send().await.map_err(|e| e.to_string())?;
-    let status = response.status();
-
-    if status == reqwest::StatusCode::OK {
-        downloaded = 0;
-    } else if status != reqwest::StatusCode::PARTIAL_CONTENT && !status.is_success() {
-        let message = format!("Error del servidor HTTP: {status}");
-        let _ = on_event.send(DownloadEvent::Error {
-            message: message.clone(),
-        });
-        return Err(message);
-    }
-
-    let total_size = response.content_length().unwrap_or(0) + downloaded;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(downloaded > 0)
-        .truncate(downloaded == 0)
-        .open(&part_path)
-        .map_err(|e| e.to_string())?;
-
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let data = chunk.map_err(|e| e.to_string())?;
-        file.write_all(&data).map_err(|e| e.to_string())?;
-        downloaded += data.len() as u64;
-
-        let _ = on_event.send(DownloadEvent::Progress {
-            downloaded,
-            total: total_size,
-        });
-    }
-
-    file.flush().map_err(|e| e.to_string())?;
-    drop(file);
-    fs::rename(&part_path, &dest_path).map_err(|e| e.to_string())?;
-
-    let _ = on_event.send(DownloadEvent::Finished {
-        path: dest_path.to_string_lossy().into_owned(),
-    });
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn verify_game_files(
-    game_dir: PathBuf,
-    manifest: Vec<FileManifestItem>,
-) -> Result<Vec<String>, String> {
-    tokio::task::spawn_blocking(move || {
-        manifest
-            .par_iter()
-            .filter_map(|item| {
-                let full_path = game_dir.join(&item.relative_path);
-                if !full_path.exists() {
-                    return Some(item.relative_path.clone());
-                }
-
-                match compute_sha256(&full_path) {
-                    Ok(hash) if hash.eq_ignore_ascii_case(&item.expected_sha256) => None,
-                    _ => Some(item.relative_path.clone()),
-                }
-            })
-            .collect::<Vec<_>>()
-    })
-    .await
-    .map_err(|e| e.to_string())
-}
-
-fn compute_sha256(path: &Path) -> std::io::Result<String> {
-    let mut file = File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 65536];
-
-    loop {
-        let count = file.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-
-    Ok(hex::encode(hasher.finalize()))
-}
 
 #[derive(Debug, Clone)]
 pub struct DownloadProgress {
@@ -208,6 +82,8 @@ impl Downloader {
 
         let client = reqwest::Client::builder()
             .user_agent("NetmarbleLauncher/1.0.0")
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .read_timeout(std::time::Duration::from_secs(30))
             .build()?;
 
         let mut req = client.get(url);
@@ -326,12 +202,17 @@ impl Downloader {
                 })
                 .await;
 
-            let computed_hash = Self::calculate_md5(&part_file)?;
-            if !computed_hash.eq_ignore_ascii_case(expected_hash) {
-                eprintln!(
-                    "Advertencia: Hash MD5 calculado ({}) difiere del esperado ({})",
-                    computed_hash, expected_hash
-                );
+            let part_for_hash = part_file.clone();
+            let expected_owned = expected_hash.to_string();
+            let verify_res = tokio::task::spawn_blocking(move || {
+                Self::verify_md5_file(&part_for_hash, &expected_owned)
+            })
+            .await
+            .map_err(|e| anyhow!("Error interno al verificar MD5: {}", e))?;
+
+            if let Err(err) = verify_res {
+                let _ = fs::remove_file(&part_file);
+                return Err(err);
             }
         }
 
@@ -349,19 +230,31 @@ impl Downloader {
                 speed_bytes_per_sec: 0.0,
                 progress_ratio: 1.0,
                 eta_seconds: Some(0),
-                status: "Descarga completada con éxito".to_string(),
-                is_completed: true,
+                status: "Descarga completada. Preparando extracción...".to_string(),
+                is_completed: false,
             })
             .await;
 
         Ok(dest_file.to_path_buf())
     }
 
+    pub fn verify_md5_file(file_path: &Path, expected_hash: &str) -> Result<()> {
+        let computed_hash = Self::calculate_md5(file_path)?;
+        if !computed_hash.eq_ignore_ascii_case(expected_hash.trim()) {
+            return Err(anyhow!(
+                "Verificación de integridad MD5 fallida: calculado ({}) difiere del esperado ({})",
+                computed_hash,
+                expected_hash
+            ));
+        }
+        Ok(())
+    }
+
     pub fn calculate_md5(file_path: &Path) -> Result<String> {
         let mut file = File::open(file_path)
             .with_context(|| format!("Failed to open {:?} for checksum", file_path))?;
         let mut hasher = Md5::new();
-        let mut buffer = [0u8; 1024 * 1024]; // 1MB buffer
+        let mut buffer = vec![0u8; 256 * 1024]; // 256KB heap buffer
 
         loop {
             let count = file.read(&mut buffer)?;
@@ -373,5 +266,23 @@ impl Downloader {
 
         let hash = hasher.finalize();
         Ok(hex::encode(hash))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Downloader;
+    use std::fs;
+
+    #[test]
+    fn verify_md5_rechaza_archivo_corrupto_y_acepta_valido() {
+        let tmp = std::env::temp_dir().join(format!("stardive_md5_test_{}", std::process::id()));
+        fs::write(&tmp, b"stardive-integrity-check").unwrap();
+        let valid = Downloader::calculate_md5(&tmp).unwrap();
+
+        assert!(Downloader::verify_md5_file(&tmp, &valid).is_ok());
+        assert!(Downloader::verify_md5_file(&tmp, "00000000000000000000000000000000").is_err());
+
+        let _ = fs::remove_file(&tmp);
     }
 }

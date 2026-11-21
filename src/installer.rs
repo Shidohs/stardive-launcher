@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use anyhow::{anyhow, Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -7,7 +6,6 @@ use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc::Sender;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GameManifest {
@@ -16,15 +14,6 @@ pub struct GameManifest {
     pub installed_at: String,
     pub executable: String,
     pub secondary_executable: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct InstallProgress {
-    pub current_file: usize,
-    pub total_files: usize,
-    pub current_filename: String,
-    pub progress_ratio: f32,
-    pub is_completed: bool,
 }
 
 pub struct Installer;
@@ -61,7 +50,6 @@ impl Installer {
         dest_dir: &Path,
         version: &str,
         build_sequence: u64,
-        progress_tx: Option<Sender<InstallProgress>>,
         cancel_token: Option<Arc<AtomicBool>>,
     ) -> Result<()> {
         fs::create_dir_all(dest_dir)
@@ -91,18 +79,6 @@ impl Installer {
             };
 
             let outpath = dest_dir.join(&enclosed);
-            let file_name_str = enclosed.to_string_lossy().to_string();
-
-            if let Some(ref tx) = progress_tx {
-                let ratio = (i as f32) / (total_files as f32).max(1.0);
-                let _ = tx.try_send(InstallProgress {
-                    current_file: i + 1,
-                    total_files,
-                    current_filename: file_name_str.clone(),
-                    progress_ratio: ratio,
-                    is_completed: false,
-                });
-            }
 
             if (*zip_file.name()).ends_with('/') {
                 fs::create_dir_all(&outpath)
@@ -132,16 +108,6 @@ impl Installer {
 
         // Save manifest
         Self::write_manifest(dest_dir, version, build_sequence)?;
-
-        if let Some(ref tx) = progress_tx {
-            let _ = tx.try_send(InstallProgress {
-                current_file: total_files,
-                total_files,
-                current_filename: "Completado".to_string(),
-                progress_ratio: 1.0,
-                is_completed: true,
-            });
-        }
 
         // Check executables
         let main_exe = dest_dir.join("STARDIVE.exe");

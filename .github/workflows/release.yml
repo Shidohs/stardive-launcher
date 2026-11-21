@@ -96,6 +96,7 @@ jobs:
             "Section: games" \
             "Priority: optional" \
             "Architecture: amd64" \
+            "Depends: libwebkit2gtk-4.1-0, libgtk-3-0" \
             "Maintainer: Shidox <https://github.com/Shidohs>" \
             "Description: Native Linux Launcher & Downloader for Mongil: Star Dive" \
             " Stardive Launcher is an optimized native Linux launcher and downloader" \

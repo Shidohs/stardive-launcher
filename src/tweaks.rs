@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
@@ -29,7 +28,7 @@ impl SystemTweaks {
     pub fn detect_proton_runners() -> Vec<PathBuf> {
         let mut runners = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/shidox"));
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
 
         let search_dirs = [
             home.join(".local")
@@ -60,17 +59,16 @@ impl SystemTweaks {
                             fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
                         if canonical_path.is_dir() {
                             // Check if it has a proton executable or wine executable
-                            if canonical_path.join("proton").exists()
+                            if (canonical_path.join("proton").exists()
                                 || canonical_path
                                     .join("files")
                                     .join("bin")
                                     .join("wine")
                                     .exists()
-                                || canonical_path.join("bin").join("wine").exists()
+                                || canonical_path.join("bin").join("wine").exists())
+                                && seen.insert(canonical_path.clone())
                             {
-                                if seen.insert(canonical_path.clone()) {
-                                    runners.push(canonical_path);
-                                }
+                                runners.push(canonical_path);
                             }
                         }
                     }
@@ -86,11 +84,6 @@ impl SystemTweaks {
     /// Check if gamemoderun is installed
     pub fn has_gamemode() -> bool {
         which_exists("gamemoderun")
-    }
-
-    /// Check if mangohud is installed
-    pub fn has_mangohud() -> bool {
-        which_exists("mangohud")
     }
 
     /// Check if gamescope is installed
@@ -164,12 +157,15 @@ impl SystemTweaks {
         Ok(())
     }
 
-    /// Aplica ajustes de UE5 a todos los usuarios configurados en el prefijo de Wine
+    /// Aplica ajustes de UE5 a todos los usuarios configurados en el prefijo de Wine/Proton
     pub fn apply_user_tweaks(prefix_dir: &Path, tweaks: &Ue5Tweaks) -> Result<()> {
-        let users_dir = prefix_dir.join("drive_c").join("users");
-        if !users_dir.exists() {
+        let user_roots = [
+            prefix_dir.join("pfx").join("drive_c").join("users"),
+            prefix_dir.join("drive_c").join("users"),
+        ];
+        let Some(users_dir) = user_roots.into_iter().find(|p| p.exists()) else {
             return Ok(());
-        }
+        };
 
         let entries = fs::read_dir(&users_dir)?;
         for entry in entries.flatten() {
@@ -193,83 +189,87 @@ impl SystemTweaks {
 
                 // 2. Tweak GameUserSettings.ini (FrameRateLimit y bUseVSync)
                 let gus_ini = config_dir.join("GameUserSettings.ini");
-                let mut gus_content = if gus_ini.exists() {
+                let gus_content = if gus_ini.exists() {
                     fs::read_to_string(&gus_ini).unwrap_or_default()
                 } else {
                     String::new()
                 };
 
-                let fps_val = if tweaks.max_fps == 0 {
-                    "0.000000"
-                } else {
-                    &format!("{}.000000", tweaks.max_fps)
-                };
-                let vsync_val = if tweaks.vsync { "True" } else { "False" };
-
-                if !gus_content.contains("[/Script/BigCat.BigCatGameUserSettings]")
-                    && !gus_content.contains("[/Script/Engine.GameUserSettings]")
-                {
-                    gus_content.push_str(&format!(
-                        "\n[/Script/Engine.GameUserSettings]\nFrameRateLimit={}\nbUseVSync={}\n",
-                        fps_val, vsync_val
-                    ));
-                } else {
-                    let mut lines: Vec<String> =
-                        gus_content.lines().map(|s| s.to_string()).collect();
-                    let mut found_fps = false;
-                    let mut found_vsync = false;
-
-                    for line in &mut lines {
-                        if line.trim_start().starts_with("FrameRateLimit=") {
-                            *line = format!("FrameRateLimit={}", fps_val);
-                            found_fps = true;
-                        }
-                        if line.trim_start().starts_with("bUseVSync=") {
-                            *line = format!("bUseVSync={}", vsync_val);
-                            found_vsync = true;
-                        }
-                    }
-
-                    if !found_fps {
-                        lines.push(format!("FrameRateLimit={}", fps_val));
-                    }
-                    if !found_vsync {
-                        lines.push(format!("bUseVSync={}", vsync_val));
-                    }
-                    gus_content = lines.join("\n");
-                }
-
-                let _ = fs::write(&gus_ini, gus_content);
+                let updated_gus =
+                    Self::patch_game_user_settings_ini(&gus_content, tweaks.max_fps, tweaks.vsync);
+                let _ = fs::write(&gus_ini, updated_gus);
             }
         }
 
         Ok(())
     }
 
-    /// Apply Unreal Engine 5 FPS Unlocker tweaks to Mongil: Star Dive (retrocompatibilidad)
-    pub fn apply_fps_tweak(prefix_dir: &Path, fps_limit: u32, vsync: bool) -> Result<()> {
-        let tweaks = Ue5Tweaks {
-            max_fps: fps_limit,
-            vsync,
-            disable_motion_blur: false,
-            disable_chromatic_aberration: false,
-            disable_film_grain: false,
+    pub fn patch_game_user_settings_ini(content: &str, max_fps: u32, vsync: bool) -> String {
+        let fps_val = if max_fps == 0 {
+            "0.000000".to_string()
+        } else {
+            format!("{}.000000", max_fps)
         };
-        Self::apply_user_tweaks(prefix_dir, &tweaks)
+        let vsync_val = if vsync { "True" } else { "False" };
+
+        let target_sections = [
+            "[/Script/BigCat.BigCatGameUserSettings]",
+            "[/Script/Engine.GameUserSettings]",
+        ];
+
+        let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        let section_idx = lines
+            .iter()
+            .position(|l| target_sections.contains(&l.trim()));
+
+        let Some(sec_start) = section_idx else {
+            let mut out = content.to_string();
+            out.push_str(&format!(
+                "\n[/Script/Engine.GameUserSettings]\nFrameRateLimit={}\nbUseVSync={}\n",
+                fps_val, vsync_val
+            ));
+            return out;
+        };
+
+        let sec_end = lines[sec_start + 1..]
+            .iter()
+            .position(|l| l.trim_start().starts_with('['))
+            .map(|o| sec_start + 1 + o)
+            .unwrap_or(lines.len());
+
+        let mut found_fps = false;
+        let mut found_vsync = false;
+
+        for line in &mut lines[sec_start + 1..sec_end] {
+            if line.trim_start().starts_with("FrameRateLimit=") {
+                *line = format!("FrameRateLimit={}", fps_val);
+                found_fps = true;
+            } else if line.trim_start().starts_with("bUseVSync=") {
+                *line = format!("bUseVSync={}", vsync_val);
+                found_vsync = true;
+            }
+        }
+
+        let mut insert_pos = sec_end;
+        if !found_fps {
+            lines.insert(insert_pos, format!("FrameRateLimit={}", fps_val));
+            insert_pos += 1;
+        }
+        if !found_vsync {
+            lines.insert(insert_pos, format!("bUseVSync={}", vsync_val));
+        }
+
+        let mut out = lines.join("\n");
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out
     }
 
     /// Clear DXVK and VKD3D shader cache to resolve stuttering after updates
-    pub fn clear_shader_cache(prefix_dir: &Path) -> Result<usize> {
+    pub fn clear_shader_cache(prefix_dir: &Path, game_dir: &Path) -> Result<usize> {
         let mut count = 0;
-        let cache_dirs = [
-            prefix_dir.join("shadercache"),
-            prefix_dir
-                .join("drive_c")
-                .join("Program Files")
-                .join("Netmarble")
-                .join("Netmarble Game")
-                .join("STARDIVE"),
-        ];
+        let cache_dirs = [prefix_dir.join("shadercache"), game_dir.to_path_buf()];
 
         for dir in &cache_dirs {
             if dir.exists() {
@@ -277,10 +277,10 @@ impl SystemTweaks {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                            if ext == "dxvk-cache" || ext == "vkd3d-cache" || ext == "cache" {
-                                if fs::remove_file(&path).is_ok() {
-                                    count += 1;
-                                }
+                            if matches!(ext, "dxvk-cache" | "vkd3d-cache" | "cache")
+                                && fs::remove_file(&path).is_ok()
+                            {
+                                count += 1;
                             }
                         }
                     }
@@ -302,4 +302,20 @@ pub fn which_exists(bin: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SystemTweaks;
+
+    #[test]
+    fn patch_gus_inserta_claves_dentro_de_seccion_correcta() {
+        let ini = "[/Script/Engine.GameUserSettings]\nResolutionSizeX=1920\n\n[ScalabilityGroups]\nsg.ViewDistanceQuality=3\n";
+        let patched = SystemTweaks::patch_game_user_settings_ini(ini, 144, false);
+        let pos_fps = patched.find("FrameRateLimit=144.000000").unwrap();
+        let pos_vsync = patched.find("bUseVSync=False").unwrap();
+        let pos_scalability = patched.find("[ScalabilityGroups]").unwrap();
+        assert!(pos_fps < pos_scalability);
+        assert!(pos_vsync < pos_scalability);
+    }
 }

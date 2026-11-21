@@ -1,26 +1,17 @@
-use crate::config::LauncherConfig;
+use crate::auth::AuthSession;
+use crate::config::{LauncherConfig, RenderApi};
 use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
-pub enum RenderApi {
-    DirectX12, // Usa VKD3D-Proton (Recomendado para UE5)
-    DirectX11, // Usa DXVK / DXVK-Async
-}
-
-impl Default for RenderApi {
-    fn default() -> Self {
-        Self::DirectX12
-    }
-}
-
 pub struct GameRunner;
 
 impl GameRunner {
-    pub fn launch(config: &LauncherConfig) -> Result<Child> {
+    pub fn launch(
+        config: &LauncherConfig,
+        session_override: Option<&AuthSession>,
+    ) -> Result<Child> {
         let game_exe = config.game_exe_path();
         if !game_exe.exists() {
             return Err(anyhow!(
@@ -118,7 +109,10 @@ impl GameRunner {
 
         // Netmarble Official SSO Authentication Token Injection
         let mut has_nmauth = false;
-        if let Ok(Some(session)) = crate::auth::AuthManager::load_session() {
+        let active_session = session_override
+            .cloned()
+            .or_else(|| crate::auth::AuthManager::load_session().ok().flatten());
+        if let Some(session) = active_session {
             println!(
                 "Inyectando token de sesión oficial de Netmarble: {} (Player ID: {})",
                 session.profile_name, session.player_id
@@ -201,7 +195,7 @@ impl GameRunner {
         // Configuración de Proton y UMU
         cmd.env("STEAM_COMPAT_DATA_PATH", prefix_dir);
         let steam_client_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/home/shidox"))
+            .unwrap_or_else(|| PathBuf::from("."))
             .join(".local")
             .join("share")
             .join("Steam");
@@ -272,80 +266,130 @@ impl GameRunner {
 
         Ok(child)
     }
-
-    pub fn is_running(child: &mut Option<Child>) -> bool {
-        if let Some(ref mut proc) = child {
-            match proc.try_wait() {
-                Ok(None) => true,
-                Ok(Some(_)) => {
-                    *child = None;
-                    false
-                }
-                Err(_) => {
-                    *child = None;
-                    false
-                }
-            }
-        } else {
-            false
-        }
-    }
 }
 
 /// Sincroniza la clave NMDeviceKey en el registro de Wine (HKCU\Software\Netmarble\NetmarbleSDK)
 /// Requerida por Unreal Engine y NetmarbleSDK para validar el token JWT oficial
 fn ensure_wine_registry_device_key(prefix_dir: &std::path::Path, device_key: &str) {
-    let user_reg = prefix_dir.join("user.reg");
-    if !user_reg.exists() {
+    let candidates = [
+        prefix_dir.join("pfx").join("user.reg"),
+        prefix_dir.join("user.reg"),
+    ];
+    let Some(user_reg) = candidates.into_iter().find(|p| p.exists()) else {
         return;
+    };
+
+    if let Ok(content) = std::fs::read_to_string(&user_reg) {
+        let updated = upsert_wine_registry_device_key(&content, device_key);
+        if updated != content {
+            let _ = std::fs::write(&user_reg, updated);
+        }
     }
+}
 
-    if let Ok(mut content) = std::fs::read_to_string(&user_reg) {
-        let section_header = "[Software\\\\Netmarble\\\\NetmarbleSDK]";
-        let entry = format!("\"NMDeviceKey\"=\"{}\"", device_key);
+fn upsert_wine_registry_device_key(content: &str, device_key: &str) -> String {
+    let section_header = "[Software\\\\Netmarble\\\\NetmarbleSDK]";
+    let entry = format!("\"NMDeviceKey\"=\"{}\"", device_key);
 
-        if content.contains(section_header) {
-            if content.contains(&entry) {
-                return; // Ya está actualizada
-            }
-            if let Some(sec_idx) = content.find(section_header) {
-                let rest = &content[sec_idx..];
-                if let Some(next_sec) = rest[section_header.len()..].find("\n[") {
-                    let sec_end = sec_idx + section_header.len() + next_sec;
-                    let sec_content = &content[sec_idx..sec_end];
-                    if sec_content.contains("\"NMDeviceKey\"=") {
-                        let lines: Vec<String> = sec_content
-                            .lines()
-                            .map(|l| {
-                                if l.starts_with("\"NMDeviceKey\"=") {
-                                    entry.clone()
-                                } else {
-                                    l.to_string()
-                                }
-                            })
-                            .collect();
-                        content.replace_range(sec_idx..sec_end, &lines.join("\n"));
-                    } else {
-                        content.insert_str(
-                            sec_idx + section_header.len() + 1,
-                            &format!("{}\n", entry),
-                        );
-                    }
-                } else {
-                    content.push_str(&format!("\n{}\n", entry));
-                }
-            }
-        } else {
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(1789048653);
-            content.push_str(&format!(
-                "\n{} {}\n#time=1db000000000000\n{}\n",
-                section_header, ts, entry
-            ));
+    if let Some(sec_idx) = content.find(section_header) {
+        let rest = &content[sec_idx..];
+        let sec_end = rest[section_header.len()..]
+            .find("\n[")
+            .map(|o| sec_idx + section_header.len() + o)
+            .unwrap_or(content.len());
+        let sec_content = &content[sec_idx..sec_end];
+
+        if sec_content.lines().any(|l| l.trim() == entry) {
+            return content.to_string();
         }
 
-        let _ = std::fs::write(&user_reg, content);
+        let mut out = content.to_string();
+        if sec_content
+            .lines()
+            .any(|l| l.starts_with("\"NMDeviceKey\"="))
+        {
+            let lines: Vec<String> = sec_content
+                .lines()
+                .map(|l| {
+                    if l.starts_with("\"NMDeviceKey\"=") {
+                        entry.clone()
+                    } else {
+                        l.to_string()
+                    }
+                })
+                .collect();
+            let mut replaced = lines.join("\n");
+            if sec_content.ends_with('\n') {
+                replaced.push('\n');
+            }
+            out.replace_range(sec_idx..sec_end, &replaced);
+        } else if let Some(first_nl) = sec_content.find('\n') {
+            let mut insert_offset = sec_idx + first_nl + 1;
+            let after_header = &content[insert_offset..sec_end];
+            if after_header.starts_with("#time=") {
+                if let Some(time_nl) = after_header.find('\n') {
+                    insert_offset += time_nl + 1;
+                } else {
+                    insert_offset = sec_end;
+                }
+            }
+            out.insert_str(insert_offset, &format!("{}\n", entry));
+        } else {
+            out.push_str(&format!("\n{}\n", entry));
+        }
+        return out;
+    }
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(1789048653);
+    let mut out = content.to_string();
+    out.push_str(&format!(
+        "\n{} {}\n#time=1db000000000000\n{}\n",
+        section_header, ts, entry
+    ));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ensure_wine_registry_device_key, upsert_wine_registry_device_key};
+    use std::fs;
+
+    #[test]
+    fn upsert_preserva_timestamp_en_cabecera_sin_clave() {
+        let reg = "[Software\\\\Netmarble\\\\NetmarbleSDK] 1789100489\n#time=1dd41a504a2e832\n\n[Software\\\\Valve\\\\Steam] 1787951530\n";
+        let updated = upsert_wine_registry_device_key(reg, "uuid-test-123");
+        assert!(updated.contains("[Software\\\\Netmarble\\\\NetmarbleSDK] 1789100489\n#time=1dd41a504a2e832\n\"NMDeviceKey\"=\"uuid-test-123\"\n"));
+        assert!(updated.contains("[Software\\\\Valve\\\\Steam] 1787951530"));
+    }
+
+    #[test]
+    fn upsert_reemplaza_en_ultima_seccion_sin_duplicar() {
+        let reg =
+            "[Software\\\\Netmarble\\\\NetmarbleSDK] 1789100489\n\"NMDeviceKey\"=\"old-key\"\n";
+        let updated = upsert_wine_registry_device_key(reg, "new-key");
+        assert_eq!(updated.matches("\"NMDeviceKey\"=").count(), 1);
+        assert!(updated.contains("\"NMDeviceKey\"=\"new-key\""));
+    }
+
+    #[test]
+    fn ensure_resuelve_pfx_user_reg() {
+        let base = std::env::temp_dir().join(format!("stardive_test_pfx_{}", std::process::id()));
+        let pfx = base.join("pfx");
+        fs::create_dir_all(&pfx).unwrap();
+        let reg_path = pfx.join("user.reg");
+        fs::write(
+            &reg_path,
+            "[Software\\\\Netmarble\\\\NetmarbleSDK] 1789100489\n",
+        )
+        .unwrap();
+
+        ensure_wine_registry_device_key(&base, "pfx-uuid-999");
+        let content = fs::read_to_string(&reg_path).unwrap();
+        assert!(content.contains("[Software\\\\Netmarble\\\\NetmarbleSDK] 1789100489\n\"NMDeviceKey\"=\"pfx-uuid-999\"\n"));
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

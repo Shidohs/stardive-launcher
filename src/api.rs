@@ -174,6 +174,8 @@ pub struct BackgroundSlide {
     pub tag: String,
     pub title: String,
     pub desc: String,
+    #[serde(default)]
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -345,6 +347,93 @@ impl ApiClient {
         let html = resp.text().await?;
         Self::parse_official_site_background(&html)
             .ok_or_else(|| anyhow!("No se encontró video de fondo oficial en el HTML"))
+    }
+}
+
+
+fn is_latin_title(title: &str) -> bool {
+    let mut ascii_letters = 0usize;
+    let mut non_latin = 0usize;
+    for ch in title.chars() {
+        if ch.is_ascii_alphabetic() {
+            ascii_letters += 1;
+        } else if ('\u{0E00}'..='\u{0E7F}').contains(&ch)
+            || ('\u{4E00}'..='\u{9FFF}').contains(&ch)
+            || ('\u{3040}'..='\u{30FF}').contains(&ch)
+            || ('\u{AC00}'..='\u{D7AF}').contains(&ch)
+        {
+            non_latin += 1;
+        }
+    }
+    ascii_letters >= 4 && non_latin == 0
+}
+
+fn summarize_forum_content(content: &str) -> String {
+    let cleaned = content
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with("Tame the Unknown") && !l.starts_with("Hello."))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let compact: String = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() > 115 {
+        let short: String = compact.chars().take(112).collect();
+        format!("{}...", short.trim_end())
+    } else if compact.is_empty() {
+        "Haz clic para leer el anuncio oficial completo en el foro de Netmarble.".to_string()
+    } else {
+        compact
+    }
+}
+
+impl ApiClient {
+    async fn fetch_forum_board_latest(
+        &self,
+        menu_seq: u32,
+        tag: &str,
+    ) -> Option<BackgroundSlide> {
+        let url = format!(
+            "https://forum.netmarble.com/api/game/monster2/official/forum/stardive_gl/article/list?rows=9&start=0&menuSeq={}",
+            menu_seq
+        );
+        let referer = format!("https://forum.netmarble.com/stardive_gl/list/{}/1", menu_seq);
+        let resp = self
+            .client
+            .get(&url)
+            .header("Referer", referer)
+            .header("Origin", "https://forum.netmarble.com")
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let json: serde_json::Value = resp.json().await.ok()?;
+        let articles = json.get("articleList")?.as_array()?;
+        let chosen = articles.iter().find(|item| {
+            item.get("title")
+                .and_then(|v| v.as_str())
+                .map(is_latin_title)
+                .unwrap_or(false)
+        })?;
+        let id = chosen.get("id")?.as_u64()?;
+        let title = chosen.get("title")?.as_str()?.trim().to_string();
+        let content = chosen.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        Some(BackgroundSlide {
+            tag: tag.to_string(),
+            title,
+            desc: summarize_forum_content(content),
+            url: format!("https://forum.netmarble.com/stardive_gl/view/{}/{}", menu_seq, id),
+        })
+    }
+
+    pub async fn fetch_official_forum_slides(&self) -> Vec<BackgroundSlide> {
+        let (update, event, notice) = tokio::join!(
+            self.fetch_forum_board_latest(8, "ACTUALIZACIÓN"),
+            self.fetch_forum_board_latest(6, "EVENTO"),
+            self.fetch_forum_board_latest(2, "AVISO"),
+        );
+        [update, event, notice].into_iter().flatten().collect()
     }
 }
 

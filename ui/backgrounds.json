@@ -5,19 +5,22 @@
       "poster_url": "https://sgimage.netmarble.com/images/netmarble/monster2/20260930/2cfb1790729944814.jpg",
       "slides": [
         {
-          "tag": "ACTUALIZACIÓN 1.05",
-          "title": "Nuevo Personaje: M.A.D. • v1.05.00",
-          "desc": "Episodio «Light From a Fallen Star», historia de evento «A Flame Chasing Freedom» y Honor Ranking."
+          "tag": "ACTUALIZACIÓN",
+          "title": "11/10 (Tue) 「Light From a Fallen Star」 Version 1.5 Update Notice",
+          "desc": "Nuevo personaje M.A.D., episodio principal y contenido de temporada 1.5. Clic para abrir notas oficiales.",
+          "url": "https://forum.netmarble.com/stardive_gl/view/8/769"
         },
         {
           "tag": "EVENTO",
-          "title": "A Flame Chasing Freedom",
-          "desc": "Reclama recompensas de temporada, cupones y recursos exclusivos desde el portal oficial."
+          "title": "11/18 (Wed) Event Notice",
+          "desc": "Eventos activos y recompensas de celebración de la versión 1.5 en el foro oficial.",
+          "url": "https://forum.netmarble.com/stardive_gl/view/6/793"
         },
         {
-          "tag": "TIENDA",
-          "title": "Novedades en la Web Store",
-          "desc": "Paquetes especiales del parche 1.5 y bonificaciones en la tienda oficial de Netmarble."
+          "tag": "AVISO",
+          "title": "11/19 (Thu) Live Patch Notice [Complete]",
+          "desc": "Detalles del parche en vivo y notas recientes de mantenimiento.",
+          "url": "https://forum.netmarble.com/stardive_gl/list/2/1"
         }
       ]
     },
@@ -26,19 +29,22 @@
       "poster_url": "https://sgimage.netmarble.com/images/netmarble/monster2/20260930/2cfb1790729944814.jpg",
       "slides": [
         {
-          "tag": "ACTUALIZACIÓN 1.05",
-          "title": "Nuevo Personaje: M.A.D. • v1.05.00",
-          "desc": "Episodio «Light From a Fallen Star», historia de evento «A Flame Chasing Freedom» y Honor Ranking."
+          "tag": "ACTUALIZACIÓN",
+          "title": "11/10 (Tue) 「Light From a Fallen Star」 Version 1.5 Update Notice",
+          "desc": "Nuevo personaje M.A.D., episodio principal y contenido de temporada 1.5. Clic para abrir notas oficiales.",
+          "url": "https://forum.netmarble.com/stardive_gl/view/8/769"
         },
         {
           "tag": "EVENTO",
-          "title": "Recompensas de Temporada Activas",
-          "desc": "Reclama tus personajes estelares y armas exclusivas en el portal de cupones."
+          "title": "11/18 (Wed) Event Notice",
+          "desc": "Eventos activos y recompensas de celebración de la versión 1.5 en el foro oficial.",
+          "url": "https://forum.netmarble.com/stardive_gl/view/6/793"
         },
         {
-          "tag": "TIENDA",
-          "title": "Descuentos en la Web Store",
-          "desc": "Paquetes especiales y cristales con bonificación en la tienda web."
+          "tag": "AVISO",
+          "title": "11/19 (Thu) Live Patch Notice [Complete]",
+          "desc": "Detalles del parche en vivo y notas recientes de mantenimiento.",
+          "url": "https://forum.netmarble.com/stardive_gl/list/2/1"
         }
       ]
     }

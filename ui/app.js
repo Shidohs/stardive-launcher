@@ -200,53 +200,79 @@ function setupTauriListeners() {
   });
 }
 
-// Setup Interactive Carousel
-function setupCarousel() {
-  const slides = [
-    {
-      tag: "ACTUALIZACIÓN",
-      title: "Cliente Nativo Linux v1.05.00",
-      desc: "Bypass completo de Electron y CrashSight VEH con GE-Proton y DXVK Async.",
-    },
-    {
-      tag: "EVENTO",
-      title: "Recompensas de Pre-registro Activas",
-      desc: "Reclama tus personajes estelares y armas exclusivas en el portal de cupones.",
-    },
-    {
-      tag: "TIENDA",
-      title: "Descuentos en la Web Store",
-      desc: "Paquetes especiales y cristales con bonificación de lanzamiento.",
-    },
-  ];
+// Setup Interactive Carousel (live official Netmarble forum notices)
+let carouselSlides = [
+  {
+    tag: "ACTUALIZACIÓN",
+    title: "Cargando últimas novedades oficiales...",
+    desc: "Conectando con el foro oficial de MONGIL: STAR DIVE.",
+    url: "https://forum.netmarble.com/stardive_gl",
+  },
+];
+let carouselActiveIndex = 0;
 
-  let activeIndex = 0;
+function renderCarouselSlide(idx) {
+  if (!carouselSlides.length) return;
+  carouselActiveIndex = idx % carouselSlides.length;
+  const slide = carouselSlides[carouselActiveIndex];
   const tagEl = document.getElementById("carousel-tag");
   const titleEl = document.getElementById("carousel-title");
   const descEl = document.getElementById("carousel-desc");
+  const cardEl = document.getElementById("carousel-card");
   const dots = document.querySelectorAll(".carousel-dots .dot");
 
-  function setSlide(idx) {
-    activeIndex = idx;
-    tagEl.textContent = slides[idx].tag;
-    titleEl.textContent = slides[idx].title;
-    descEl.textContent = slides[idx].desc;
-
-    dots.forEach((d, i) => {
-      d.classList.toggle("active", i === idx);
-    });
+  if (tagEl) tagEl.textContent = slide.tag || "NOTICIA";
+  if (titleEl) titleEl.textContent = slide.title || "";
+  if (descEl) descEl.textContent = slide.desc || "";
+  if (cardEl) {
+    cardEl.style.cursor = slide.url ? "pointer" : "default";
+    cardEl.title = slide.url ? "Abrir anuncio oficial en el navegador" : "";
   }
+  dots.forEach((d, i) => {
+    d.style.display = i < carouselSlides.length ? "inline-block" : "none";
+    d.classList.toggle("active", i === carouselActiveIndex);
+  });
+}
+
+function updateCarouselSlides(newSlides) {
+  if (!Array.isArray(newSlides) || newSlides.length === 0) return;
+  carouselSlides = newSlides.slice(0, 3);
+  renderCarouselSlide(0);
+}
+
+function setupCarousel() {
+  const dots = document.querySelectorAll(".carousel-dots .dot");
+  const cardEl = document.getElementById("carousel-card");
 
   dots.forEach((dot) => {
-    dot.addEventListener("click", () => {
+    dot.addEventListener("click", (e) => {
+      e.stopPropagation();
       const idx = parseInt(dot.getAttribute("data-index"), 10);
-      setSlide(idx);
+      renderCarouselSlide(idx);
     });
   });
 
-  // Auto rotate every 6 seconds
+  if (cardEl) {
+    cardEl.addEventListener("click", async () => {
+      const current = carouselSlides[carouselActiveIndex];
+      if (!current || !current.url) return;
+      if (window.__TAURI__) {
+        try {
+          await invoke("open_external", { url: current.url });
+        } catch (err) {
+          console.warn("open_external failed:", err);
+        }
+      } else {
+        window.open(current.url, "_blank", "noopener,noreferrer");
+      }
+    });
+  }
+
+  renderCarouselSlide(0);
   setInterval(() => {
-    setSlide((activeIndex + 1) % slides.length);
+    if (carouselSlides.length > 1) {
+      renderCarouselSlide((carouselActiveIndex + 1) % carouselSlides.length);
+    }
   }, 6000);
 }
 
@@ -370,9 +396,8 @@ function setupButtons() {
   document.getElementById("btn-close-account").addEventListener("click", closeAccountModal);
 
   // Providers
-  document.getElementById("btn-login-google").addEventListener("click", () => startAuth("google"));
-  document.getElementById("btn-login-email").addEventListener("click", () => startAuth("email"));
-  document.getElementById("btn-login-apple").addEventListener("click", () => startAuth("apple"));
+  const btnLoginNm = document.getElementById("btn-login-netmarble");
+  if (btnLoginNm) btnLoginNm.addEventListener("click", () => startAuth("email"));
 
   document.getElementById("btn-cancel-auth").addEventListener("click", async () => {
     try {
@@ -946,15 +971,7 @@ async function loadDynamicBackground() {
   }
 
   if (media && Array.isArray(media.slides) && media.slides.length > 0) {
-    const tagEl = document.getElementById("carousel-tag");
-    const titleEl = document.getElementById("carousel-title");
-    const descEl = document.getElementById("carousel-desc");
-    if (tagEl && titleEl && descEl) {
-      const activeVer = currentStatus.server_version || media.version || "";
-      tagEl.textContent = activeVer ? `ACTUALIZACIÓN v${activeVer}` : (media.slides[0].tag || tagEl.textContent);
-      titleEl.textContent = media.slides[0].title || titleEl.textContent;
-      descEl.textContent = media.slides[0].desc || descEl.textContent;
-    }
+    updateCarouselSlides(media.slides);
   }
 
   if (video) {

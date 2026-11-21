@@ -760,15 +760,22 @@ async fn get_background_media(
 
     let mut entry = api::ApiClient::resolve_manifest_entry(&manifest, &resolved_version);
 
-    // Auto-descubrimiento en vivo desde stardive.netmarble.com cuando no hay manifiesto personalizado
+    // Auto-descubrimiento en vivo: video oficial + noticias reales del foro de Netmarble
     if config.background_manifest_url.trim().is_empty() {
-        if let Ok((live_video, live_poster)) = api_client.fetch_official_site_background().await {
+        let (bg_res, forum_slides) = tokio::join!(
+            api_client.fetch_official_site_background(),
+            api_client.fetch_official_forum_slides(),
+        );
+        if let Ok((live_video, live_poster)) = bg_res {
             if !live_video.is_empty() {
                 entry.video_url = live_video;
             }
             if !live_poster.is_empty() {
                 entry.poster_url = live_poster;
             }
+        }
+        if !forum_slides.is_empty() {
+            entry.slides = forum_slides;
         }
     }
 

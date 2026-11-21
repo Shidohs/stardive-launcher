@@ -42,11 +42,10 @@ impl Default for ApiClient {
 
     #[test]
     fn parse_official_site_background_extrae_video_y_poster() {
-        let html = r#"bgGB_pc:"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Fhero.mp4",posterGB_pc:"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Fposter.jpg","desc-pc":"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Foverlay.png""#;
-        let (video, poster, overlay) = ApiClient::parse_official_site_background(html).unwrap();
+        let html = r#"poster:"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Fposter.jpg",bgGB_pc:"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Fhero.mp4""#;
+        let (video, poster) = ApiClient::parse_official_site_background(html).unwrap();
         assert_eq!(video, "https://sgimage.netmarble.com/images/hero.mp4");
         assert_eq!(poster, "https://sgimage.netmarble.com/images/poster.jpg");
-        assert_eq!(overlay, "https://sgimage.netmarble.com/images/overlay.png");
     }
 }
 
@@ -186,8 +185,6 @@ pub struct BackgroundEntry {
     #[serde(default)]
     pub poster_url: String,
     #[serde(default)]
-    pub overlay_url: String,
-    #[serde(default)]
     pub slides: Vec<BackgroundSlide>,
 }
 
@@ -203,7 +200,6 @@ pub struct ResolvedBackgroundMedia {
     pub animated: bool,
     pub video_url: String,
     pub poster_url: String,
-    pub overlay_url: String,
     pub cached_video_path: Option<String>,
     pub cached_poster_path: Option<String>,
     pub slides: Vec<BackgroundSlide>,
@@ -314,26 +310,31 @@ fn extract_quoted_field(haystack: &str, key: &str) -> Option<String> {
 }
 
 impl ApiClient {
-    /// Extrae automáticamente el video PC global (`bgGB_pc`/`bg_pc`),
-    /// el póster PC (`posterGB_pc`/`poster_pc`) y la capa PNG superpuesta (`"desc-pc"`).
-    pub fn parse_official_site_background(raw_html: &str) -> Option<(String, String, String)> {
+    /// Extrae automáticamente el video de fondo PC global (`bgGB_pc` o `bg_pc`)
+    /// y el póster desde el sitio oficial de Netmarble cuando sale un nuevo parche.
+    pub fn parse_official_site_background(raw_html: &str) -> Option<(String, String)> {
         let normalized = raw_html.replace("\\u002F", "/");
         let video = extract_quoted_field(&normalized, "bgGB_pc")
             .or_else(|| extract_quoted_field(&normalized, "bg_pc"))
             .filter(|u| u.ends_with(".mp4") || u.ends_with(".webm"))?;
 
-        let poster = extract_quoted_field(&normalized, "posterGB_pc")
-            .or_else(|| extract_quoted_field(&normalized, "poster_pc"))
+        // Buscar póster cercano antes de bgGB_pc/bg_pc si existe
+        let poster = normalized
+            .find("bgGB_pc:\"")
+            .or_else(|| normalized.find("bg_pc:\""))
+            .and_then(|pos| {
+                let window_start = pos.saturating_sub(300);
+                let slice = &normalized[window_start..pos];
+                let jpg_end = slice.rfind(".jpg")? + 4;
+                let url_start = slice[..jpg_end].rfind("https://")?;
+                Some(slice[url_start..jpg_end].to_string())
+            })
             .unwrap_or_default();
 
-        let overlay = extract_quoted_field(&normalized, "\"desc-pc\"")
-            .or_else(|| extract_quoted_field(&normalized, "desc-pc"))
-            .unwrap_or_default();
-
-        Some((video, poster, overlay))
+        Some((video, poster))
     }
 
-    pub async fn fetch_official_site_background(&self) -> Result<(String, String, String)> {
+    pub async fn fetch_official_site_background(&self) -> Result<(String, String)> {
         let resp = self
             .client
             .get(OFFICIAL_SITE_URL)

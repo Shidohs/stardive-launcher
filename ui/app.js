@@ -958,7 +958,6 @@ async function loadDynamicBackground() {
           animated: true,
           video_url: entry.video_url || "",
           poster_url: entry.poster_url || "",
-          overlay_url: entry.overlay_url || "",
           slides: entry.slides || [],
         };
       }
@@ -969,19 +968,6 @@ async function loadDynamicBackground() {
 
   if (media && media.poster_url && bgArt) {
     bgArt.style.backgroundImage = `url('${media.poster_url}')`;
-  }
-
-  const overlayImg = document.getElementById("hero-overlay-img");
-  if (overlayImg) {
-    if (media && media.overlay_url) {
-      overlayImg.classList.remove("ready");
-      overlayImg.onload = () => overlayImg.classList.add("ready");
-      overlayImg.onerror = () => overlayImg.classList.remove("ready");
-      overlayImg.src = media.overlay_url;
-    } else {
-      overlayImg.classList.remove("ready");
-      overlayImg.removeAttribute("src");
-    }
   }
 
   if (media && Array.isArray(media.slides) && media.slides.length > 0) {

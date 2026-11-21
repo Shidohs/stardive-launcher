@@ -1,44 +1,44 @@
 {
   "versions": {
     "1.05.00": {
-      "video_url": "",
-      "poster_url": "",
+      "video_url": "https://sgimage.netmarble.com/images/netmarble/monster2/20260929/aguy1790678536128.mp4",
+      "poster_url": "https://sgimage.netmarble.com/images/netmarble/monster2/20260930/2cfb1790729944814.jpg",
       "slides": [
         {
           "tag": "ACTUALIZACIÓN 1.05",
-          "title": "Cliente Nativo Linux v1.05.00",
-          "desc": "Compatibilidad actualizada con GE-Proton, VKD3D-Proton y detección automática de parches."
+          "title": "Nuevo Personaje: M.A.D. • v1.05.00",
+          "desc": "Episodio «Light From a Fallen Star», historia de evento «A Flame Chasing Freedom» y Honor Ranking."
         },
         {
           "tag": "EVENTO",
-          "title": "Recompensas de Temporada Activas",
-          "desc": "Reclama personajes estelares, cupones y recursos exclusivos desde el portal oficial."
+          "title": "A Flame Chasing Freedom",
+          "desc": "Reclama recompensas de temporada, cupones y recursos exclusivos desde el portal oficial."
         },
         {
           "tag": "TIENDA",
           "title": "Novedades en la Web Store",
-          "desc": "Paquetes de actualización y bonificaciones disponibles en la tienda web de Netmarble."
+          "desc": "Paquetes especiales del parche 1.5 y bonificaciones en la tienda oficial de Netmarble."
         }
       ]
     },
     "default": {
-      "video_url": "",
-      "poster_url": "",
+      "video_url": "https://sgimage.netmarble.com/images/netmarble/monster2/20260929/aguy1790678536128.mp4",
+      "poster_url": "https://sgimage.netmarble.com/images/netmarble/monster2/20260930/2cfb1790729944814.jpg",
       "slides": [
         {
-          "tag": "ACTUALIZACIÓN",
-          "title": "Cliente Nativo Linux",
-          "desc": "Bypass completo de Electron y CrashSight VEH con GE-Proton y DXVK/VKD3D."
+          "tag": "ACTUALIZACIÓN 1.05",
+          "title": "Nuevo Personaje: M.A.D. • v1.05.00",
+          "desc": "Episodio «Light From a Fallen Star», historia de evento «A Flame Chasing Freedom» y Honor Ranking."
         },
         {
           "tag": "EVENTO",
-          "title": "Recompensas de Pre-registro Activas",
+          "title": "Recompensas de Temporada Activas",
           "desc": "Reclama tus personajes estelares y armas exclusivas en el portal de cupones."
         },
         {
           "tag": "TIENDA",
           "title": "Descuentos en la Web Store",
-          "desc": "Paquetes especiales y cristales con bonificación de lanzamiento."
+          "desc": "Paquetes especiales y cristales con bonificación en la tienda web."
         }
       ]
     }

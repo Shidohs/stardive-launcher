@@ -30,8 +30,8 @@ const listen = (...args) => getTauriListen()(...args);
 
 let currentStatus = {
   is_installed: false,
-  installed_version: "1.03.00",
-  server_version: "1.03.00",
+  installed_version: "1.05.00",
+  server_version: "1.05.00",
   runner_name: "GE-Proton11-6",
   has_gamemode: true,
   is_downloading: false,
@@ -70,7 +70,7 @@ async function refreshStatus() {
 // Update UI elements based on state
 function updateUI() {
   // Update Chips
-  document.getElementById("version-text").textContent = `v${currentStatus.installed_version || "1.03.00"}`;
+  document.getElementById("version-text").textContent = `v${currentStatus.installed_version || "1.05.00"}`;
   document.getElementById("runner-text").textContent = currentStatus.runner_name || "GE-Proton";
   document.getElementById("gamemode-text").textContent = currentStatus.has_gamemode ? "GameMode ON" : "GameMode OFF";
 
@@ -200,7 +200,7 @@ function setupCarousel() {
   const slides = [
     {
       tag: "ACTUALIZACIÓN",
-      title: "Cliente Nativo Linux v1.03.00",
+      title: "Cliente Nativo Linux v1.05.00",
       desc: "Bypass completo de Electron y CrashSight VEH con GE-Proton y DXVK Async.",
     },
     {

@@ -763,7 +763,7 @@ async fn get_background_media(
     // Auto-descubrimiento en vivo: video oficial + noticias reales del foro de Netmarble
     if config.background_manifest_url.trim().is_empty() {
         let (bg_res, forum_slides) = tokio::join!(
-            api_client.fetch_official_site_background(),
+            api_client.fetch_official_launcher_background(),
             api_client.fetch_official_forum_slides(),
         );
         if let Ok((live_video, live_poster)) = bg_res {

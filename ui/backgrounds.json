@@ -1,8 +1,8 @@
 {
   "versions": {
     "1.05.00": {
-      "video_url": "https://sgimage.netmarble.com/images/netmarble/monster2/20260929/aguy1790678536128.mp4",
-      "poster_url": "https://sgimage.netmarble.com/images/netmarble/monster2/20260930/envf1790729917448.jpg",
+      "video_url": "https://sgimage.netmarble.com/images/netmarble/COMMON/20260930/nuns1790744278705.webm",
+      "poster_url": "https://sgimage.netmarble.com/images/netmarble/COMMON/20260729/4fl61785289205401.webp",
       "slides": [
         {
           "tag": "ACTUALIZACIÓN",
@@ -25,8 +25,8 @@
       ]
     },
     "default": {
-      "video_url": "https://sgimage.netmarble.com/images/netmarble/monster2/20260929/aguy1790678536128.mp4",
-      "poster_url": "https://sgimage.netmarble.com/images/netmarble/monster2/20260930/envf1790729917448.jpg",
+      "video_url": "https://sgimage.netmarble.com/images/netmarble/COMMON/20260930/nuns1790744278705.webm",
+      "poster_url": "https://sgimage.netmarble.com/images/netmarble/COMMON/20260729/4fl61785289205401.webp",
       "slides": [
         {
           "tag": "ACTUALIZACIÓN",

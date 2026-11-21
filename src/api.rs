@@ -41,11 +41,17 @@ impl Default for ApiClient {
     }
 
     #[test]
-    fn parse_official_site_background_extrae_video_y_poster() {
-        let html = r#"bgGB_pc:"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Fhero.mp4",posterGB_pc:"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Fposter.jpg""#;
-        let (video, poster) = ApiClient::parse_official_site_background(html).unwrap();
-        assert_eq!(video, "https://sgimage.netmarble.com/images/hero.mp4");
-        assert_eq!(poster, "https://sgimage.netmarble.com/images/poster.jpg");
+    fn parse_launcher_game_meta_extrae_video_y_poster_oficiales() {
+        let payload = serde_json::json!({
+            "code": 0,
+            "data": {
+                "mainBgVideoUrl": "https://sgimage.netmarble.com/images/netmarble/COMMON/20260930/nuns1790744278705.webm",
+                "mainBgImageUrl": "https://sgimage.netmarble.com/images/netmarble/COMMON/20260729/4fl61785289205401.webp"
+            }
+        });
+        let (video, poster) = ApiClient::parse_launcher_game_meta(&payload).unwrap();
+        assert!(video.ends_with(".webm"));
+        assert!(poster.ends_with(".webp"));
     }
 }
 
@@ -294,50 +300,46 @@ impl ApiClient {
 }
 
 
-pub const OFFICIAL_SITE_URL: &str = "https://stardive.netmarble.com/es";
-
-fn extract_quoted_field(haystack: &str, key: &str) -> Option<String> {
-    let needle = format!("{}:\"", key);
-    let start = haystack.find(&needle)? + needle.len();
-    let rest = &haystack[start..];
-    let end = rest.find('"')?;
-    let val = &rest[..end];
-    if val.starts_with("https://") {
-        Some(val.to_string())
-    } else {
-        None
-    }
-}
+pub const API_GAME_META_URL: &str =
+    "https://apis.netmarble.com/cpplauncher/api/games/monster2";
 
 impl ApiClient {
-    /// Extrae automáticamente el video de fondo PC global (`bgGB_pc` o `bg_pc`)
-    /// y el póster desde el sitio oficial de Netmarble cuando sale un nuevo parche.
-    pub fn parse_official_site_background(raw_html: &str) -> Option<(String, String)> {
-        let normalized = raw_html.replace("\\u002F", "/");
-        let video = extract_quoted_field(&normalized, "bgGB_pc")
-            .or_else(|| extract_quoted_field(&normalized, "bg_pc"))
-            .filter(|u| u.ends_with(".mp4") || u.ends_with(".webm"))?;
-
-        let poster = extract_quoted_field(&normalized, "posterGB_pc")
-            .or_else(|| extract_quoted_field(&normalized, "poster_pc"))
-            .unwrap_or_default();
-
-        Some((video, poster))
+    /// Parsea `mainBgVideoUrl` y `mainBgImageUrl` desde el JSON oficial del Netmarble Launcher
+    /// (`/cpplauncher/api/games/monster2`).
+    pub fn parse_launcher_game_meta(json: &serde_json::Value) -> Option<(String, String)> {
+        let data = json.get("data").unwrap_or(json);
+        let video = data
+            .get("mainBgVideoUrl")
+            .and_then(|v| v.as_str())
+            .filter(|s| s.starts_with("https://"))
+            .unwrap_or("")
+            .to_string();
+        let poster = data
+            .get("mainBgImageUrl")
+            .and_then(|v| v.as_str())
+            .filter(|s| s.starts_with("https://"))
+            .unwrap_or("")
+            .to_string();
+        if video.is_empty() && poster.is_empty() {
+            None
+        } else {
+            Some((video, poster))
+        }
     }
 
-    pub async fn fetch_official_site_background(&self) -> Result<(String, String)> {
+    pub async fn fetch_official_launcher_background(&self) -> Result<(String, String)> {
         let resp = self
             .client
-            .get(OFFICIAL_SITE_URL)
+            .get(API_GAME_META_URL)
             .send()
             .await
-            .context("No se pudo conectar al sitio oficial de Star Dive")?;
+            .context("No se pudo conectar a la API oficial de metadatos del Netmarble Launcher")?;
         if !resp.status().is_success() {
-            return Err(anyhow!("Sitio oficial devolvió HTTP {}", resp.status()));
+            return Err(anyhow!("API oficial de metadatos devolvió HTTP {}", resp.status()));
         }
-        let html = resp.text().await?;
-        Self::parse_official_site_background(&html)
-            .ok_or_else(|| anyhow!("No se encontró video de fondo oficial en el HTML"))
+        let json: serde_json::Value = resp.json().await?;
+        Self::parse_launcher_game_meta(&json)
+            .ok_or_else(|| anyhow!("No se encontraron mainBgVideoUrl/mainBgImageUrl en la API oficial"))
     }
 }
 

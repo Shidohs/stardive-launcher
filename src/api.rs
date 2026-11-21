@@ -27,32 +27,6 @@ impl Default for ApiClient {
     fn default() -> Self {
         Self::new()
     }
-
-    #[test]
-    fn resolve_manifest_entry_usa_version_o_default() {
-        let manifest: super::BackgroundManifest = serde_json::from_str(r#"{
-            "versions": {
-                "1.05.00": { "video_url": "https://cdn.example.com/105.mp4", "poster_url": "", "slides": [] },
-                "default": { "video_url": "", "poster_url": "https://cdn.example.com/default.jpg", "slides": [] }
-            }
-        }"#).unwrap();
-        assert_eq!(ApiClient::resolve_manifest_entry(&manifest, "1.05.00").video_url, "https://cdn.example.com/105.mp4");
-        assert_eq!(ApiClient::resolve_manifest_entry(&manifest, "9.99.00").poster_url, "https://cdn.example.com/default.jpg");
-    }
-
-    #[test]
-    fn parse_launcher_game_meta_extrae_video_y_poster_oficiales() {
-        let payload = serde_json::json!({
-            "code": 0,
-            "data": {
-                "mainBgVideoUrl": "https://sgimage.netmarble.com/images/netmarble/COMMON/20260930/nuns1790744278705.webm",
-                "mainBgImageUrl": "https://sgimage.netmarble.com/images/netmarble/COMMON/20260729/4fl61785289205401.webp"
-            }
-        });
-        let (video, poster) = ApiClient::parse_launcher_game_meta(&payload).unwrap();
-        assert!(video.ends_with(".webm"));
-        assert!(poster.is_empty());
-    }
 }
 
 impl ApiClient {
@@ -461,5 +435,31 @@ mod tests {
         assert_eq!(info.version, "1.04.00");
         assert_eq!(info.download_url, "https://cdn.example.com/client.zip");
         assert_eq!(info.file_size, 123456);
+    }
+
+    #[test]
+    fn resolve_manifest_entry_usa_version_o_default() {
+        let manifest: super::BackgroundManifest = serde_json::from_str(r#"{
+            "versions": {
+                "1.05.00": { "video_url": "https://cdn.example.com/105.mp4", "poster_url": "", "slides": [] },
+                "default": { "video_url": "", "poster_url": "https://cdn.example.com/default.jpg", "slides": [] }
+            }
+        }"#).unwrap();
+        assert_eq!(ApiClient::resolve_manifest_entry(&manifest, "1.05.00").video_url, "https://cdn.example.com/105.mp4");
+        assert_eq!(ApiClient::resolve_manifest_entry(&manifest, "9.99.00").poster_url, "https://cdn.example.com/default.jpg");
+    }
+
+    #[test]
+    fn parse_launcher_game_meta_extrae_video_y_poster_oficiales() {
+        let payload = serde_json::json!({
+            "code": 0,
+            "data": {
+                "mainBgVideoUrl": "https://sgimage.netmarble.com/images/netmarble/COMMON/20260930/nuns1790744278705.webm",
+                "mainBgImageUrl": "https://sgimage.netmarble.com/images/netmarble/COMMON/20260729/4fl61785289205401.webp"
+            }
+        });
+        let (video, poster) = ApiClient::parse_launcher_game_meta(&payload).unwrap();
+        assert!(video.ends_with(".webm"));
+        assert!(poster.is_empty());
     }
 }

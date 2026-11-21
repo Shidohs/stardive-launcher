@@ -10,8 +10,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
-  <!-- Background Keyart and Ambient Vignettes -->
-  <div class="bg-art"></div>
+  <!-- Background Keyart, Dynamic Video Layer, and Ambient Vignettes -->
+  <div class="bg-art" id="bg-art"></div>
+  <video class="bg-video" id="bg-video" autoplay loop muted playsinline preload="metadata"></video>
   <div class="bg-vignette-top"></div>
   <div class="bg-vignette-bottom"></div>
 
@@ -215,6 +216,14 @@
               <option value="close">Cerrar launcher completamente (Ahorro de RAM)</option>
             </select>
           </div>
+
+          <label class="switch-row">
+            <div>
+              <span>Fondo animado según actualización</span>
+              <p class="section-desc">Reproduce el video/keyart del parche actual y se pausa automáticamente al perder foco o iniciar el juego.</p>
+            </div>
+            <input type="checkbox" id="cfg-animated-bg" checked>
+          </label>
         </div>
 
         <!-- Tab 2: Linux Tweaks -->

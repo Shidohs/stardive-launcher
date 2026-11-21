@@ -11,7 +11,6 @@ use clap::Parser;
 use config::LauncherConfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
@@ -47,15 +46,39 @@ struct Cli {
 #[derive(Clone)]
 pub struct AppState {
     cancel_token: Arc<AtomicBool>,
-    game_process: Arc<Mutex<Option<Child>>>,
+    is_downloading: Arc<AtomicBool>,
+    is_playing: Arc<AtomicBool>,
+    ephemeral_session: Arc<Mutex<Option<auth::AuthSession>>>,
+    auth_cancel: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AppState {
     pub fn new() -> Self {
         Self {
             cancel_token: Arc::new(AtomicBool::new(false)),
-            game_process: Arc::new(Mutex::new(None)),
+            is_downloading: Arc::new(AtomicBool::new(false)),
+            is_playing: Arc::new(AtomicBool::new(false)),
+            ephemeral_session: Arc::new(Mutex::new(None)),
+            auth_cancel: Arc::new(Mutex::new(None)),
         }
+    }
+
+    pub fn current_auth_status(&self) -> auth::AuthStatusPayload {
+        if let Some(session) = self
+            .ephemeral_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            return auth::AuthManager::status_from_session(session);
+        }
+        auth::AuthManager::get_status()
     }
 }
 
@@ -106,9 +129,9 @@ async fn get_launcher_status(
     let manifest = installer::Installer::read_manifest(&config.game_dir);
     let installed_version = manifest.map(|m| m.version).unwrap_or_else(|| {
         if is_installed {
-            "1.03.00".to_string()
+            "Desconocida".to_string()
         } else {
-            "1.03.00".to_string()
+            "No instalado".to_string()
         }
     });
 
@@ -120,16 +143,17 @@ async fn get_launcher_status(
         .to_string();
 
     let has_gamemode = tweaks::SystemTweaks::has_gamemode();
-    let is_playing = runner::GameRunner::is_running(&mut *state.game_process.lock().unwrap());
-    let auth_status = auth::AuthManager::get_status();
+    let is_playing = state.is_playing.load(Ordering::Relaxed);
+    let is_downloading = state.is_downloading.load(Ordering::Relaxed);
+    let auth_status = state.current_auth_status();
 
     Ok(LauncherStatusPayload {
         is_installed,
-        installed_version,
-        server_version: "1.03.00".to_string(),
+        installed_version: installed_version.clone(),
+        server_version: installed_version,
         runner_name,
         has_gamemode,
-        is_downloading: false,
+        is_downloading,
         is_playing,
         is_authenticated: auth_status.is_logged_in,
         player_name: auth_status.profile_name,
@@ -144,32 +168,40 @@ async fn start_download(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let config = LauncherConfig::load().map_err(|e| e.to_string())?;
+    if state
+        .is_downloading
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("Ya existe una descarga o instalación en curso.".to_string());
+    }
+
+    let config = match LauncherConfig::load() {
+        Ok(c) => c,
+        Err(e) => {
+            state.is_downloading.store(false, Ordering::SeqCst);
+            return Err(e.to_string());
+        }
+    };
     state.cancel_token.store(false, Ordering::Relaxed);
     let cancel_token = state.cancel_token.clone();
+    let is_downloading = state.is_downloading.clone();
 
     let (tx, mut rx) = mpsc::channel(100);
 
-    // Spawn download worker task
+    // Spawn download + extraction worker task
     let game_dir = config.game_dir.clone();
     let prefix_dir = config.prefix_dir.clone();
+    let app_handle_err = app_handle.clone();
 
     tokio::spawn(async move {
         let api = api::ApiClient::new();
         let build_info = match api.fetch_build_info().await {
             Ok(b) => b,
             Err(e) => {
-                let _ = tx
-                    .send(downloader::DownloadProgress {
-                        downloaded_bytes: 0,
-                        total_bytes: 0,
-                        speed_bytes_per_sec: 0.0,
-                        progress_ratio: 0.0,
-                        eta_seconds: None,
-                        status: format!("Error de conexión: {}", e),
-                        is_completed: false,
-                    })
-                    .await;
+                let msg = format!("Error de conexión: {}", e);
+                let _ = app_handle_err.emit("download-error", serde_json::json!({ "error": msg }));
+                is_downloading.store(false, Ordering::SeqCst);
                 return;
             }
         };
@@ -193,30 +225,64 @@ async fn start_download(
                         speed_bytes_per_sec: 0.0,
                         progress_ratio: 1.0,
                         eta_seconds: Some(0),
-                        status: "Extrayendo archivos del cliente (1.3 GB)...".to_string(),
-                        is_completed: true,
+                        status: "Extrayendo archivos del cliente...".to_string(),
+                        is_completed: false,
                     })
                     .await;
 
-                let extract_result = installer::Installer::extract_zip(
-                    &zip_path,
-                    &game_dir,
-                    &build_info.version,
-                    build_info.build_sequence,
-                    None,
-                    Some(cancel_token),
-                );
+                let zip_for_extract = zip_path.clone();
+                let game_dir_for_extract = game_dir.clone();
+                let version_owned = build_info.version.clone();
+                let build_seq = build_info.build_sequence;
+                let cancel_for_extract = cancel_token.clone();
 
-                if let Err(err) = extract_result {
-                    eprintln!("Error al extraer zip: {}", err);
-                } else {
-                    let _ = std::fs::remove_file(&zip_path);
+                let extract_result = tokio::task::spawn_blocking(move || {
+                    installer::Installer::extract_zip(
+                        &zip_for_extract,
+                        &game_dir_for_extract,
+                        &version_owned,
+                        build_seq,
+                        Some(cancel_for_extract),
+                    )
+                })
+                .await;
+
+                match extract_result {
+                    Ok(Ok(())) => {
+                        let _ = std::fs::remove_file(&zip_path);
+                        let _ = tx
+                            .send(downloader::DownloadProgress {
+                                downloaded_bytes: build_info.file_size,
+                                total_bytes: build_info.file_size,
+                                speed_bytes_per_sec: 0.0,
+                                progress_ratio: 1.0,
+                                eta_seconds: Some(0),
+                                status: "Instalación completada con éxito".to_string(),
+                                is_completed: true,
+                            })
+                            .await;
+                    }
+                    Ok(Err(err)) => {
+                        let msg = format!("Error al extraer archivos: {}", err);
+                        eprintln!("{}", msg);
+                        let _ = app_handle_err
+                            .emit("download-error", serde_json::json!({ "error": msg }));
+                    }
+                    Err(join_err) => {
+                        let msg = format!("Error interno durante extracción: {}", join_err);
+                        eprintln!("{}", msg);
+                        let _ = app_handle_err
+                            .emit("download-error", serde_json::json!({ "error": msg }));
+                    }
                 }
             }
             Err(err) => {
-                eprintln!("Error en la descarga: {}", err);
+                let msg = format!("Error en la descarga: {}", err);
+                eprintln!("{}", msg);
+                let _ = app_handle_err.emit("download-error", serde_json::json!({ "error": msg }));
             }
         }
+        is_downloading.store(false, Ordering::SeqCst);
     });
 
     // Stream progress events to webview window
@@ -254,17 +320,39 @@ fn launch_game(
     window: tauri::Window,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let config = LauncherConfig::load().map_err(|e| e.to_string())?;
+    if state
+        .is_playing
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err("El juego ya se encuentra en ejecución.".to_string());
+    }
 
-    let child = runner::GameRunner::launch(&config).map_err(|e| e.to_string())?;
+    let config = match LauncherConfig::load() {
+        Ok(c) => c,
+        Err(e) => {
+            state.is_playing.store(false, Ordering::SeqCst);
+            return Err(e.to_string());
+        }
+    };
+
+    let ephemeral = state
+        .ephemeral_session
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let mut child = match runner::GameRunner::launch(&config, ephemeral.as_ref()) {
+        Ok(c) => c,
+        Err(e) => {
+            state.is_playing.store(false, Ordering::SeqCst);
+            return Err(e.to_string());
+        }
+    };
 
     let close_action = config.close_action.clone();
     match close_action.as_str() {
-        "minimize" => {
+        "minimize" | "tray" => {
             let _ = window.minimize();
-        }
-        "tray" => {
-            let _ = window.hide();
         }
         "close" => {
             std::process::exit(0);
@@ -272,27 +360,19 @@ fn launch_game(
         _ => {}
     }
 
-    *state.game_process.lock().unwrap() = Some(child);
-
-    let process_lock = state.game_process.clone();
+    let is_playing = state.is_playing.clone();
     let app_handle_clone = app_handle.clone();
     let window_clone = window.clone();
 
-    // Spawn monitoring thread
+    // Esperar finalización del proceso hijo sin polling activo
     std::thread::spawn(move || {
         let _ = app_handle_clone.emit("game-status", serde_json::json!({ "is_running": true }));
-
-        loop {
-            std::thread::sleep(std::time::Duration::from_millis(800));
-            let mut proc_opt = process_lock.lock().unwrap();
-            if !runner::GameRunner::is_running(&mut *proc_opt) {
-                let _ = app_handle_clone
-                    .emit("game-status", serde_json::json!({ "is_running": false }));
-                let _ = window_clone.show();
-                let _ = window_clone.set_focus();
-                break;
-            }
-        }
+        let _ = child.wait();
+        is_playing.store(false, Ordering::SeqCst);
+        let _ = app_handle_clone.emit("game-status", serde_json::json!({ "is_running": false }));
+        let _ = window_clone.unminimize();
+        let _ = window_clone.show();
+        let _ = window_clone.set_focus();
     });
 
     Ok(())
@@ -317,24 +397,22 @@ fn save_config(config: LauncherConfig) -> Result<(), String> {
 #[tauri::command]
 fn apply_fps_tweak(fps_limit: u32, vsync: bool) -> Result<(), String> {
     let config = LauncherConfig::load().map_err(|e| e.to_string())?;
-    tweaks::SystemTweaks::apply_fps_tweak(&config.prefix_dir, fps_limit, vsync)
+    let ue5_tweaks = tweaks::Ue5Tweaks {
+        max_fps: fps_limit,
+        vsync,
+        disable_motion_blur: config.disable_motion_blur,
+        disable_chromatic_aberration: config.disable_chromatic_aberration,
+        disable_film_grain: config.disable_film_grain,
+    };
+    tweaks::SystemTweaks::apply_user_tweaks(&config.prefix_dir, &ue5_tweaks)
         .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn apply_ue5_tweaks(engine_ini_path: PathBuf, tweaks: tweaks::Ue5Tweaks) -> Result<(), String> {
-    tweaks::SystemTweaks::apply_ue5_tweaks(&engine_ini_path, &tweaks).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn is_running_in_gamescope() -> bool {
-    tweaks::SystemTweaks::is_running_in_gamescope()
 }
 
 #[tauri::command]
 fn clear_shader_cache() -> Result<usize, String> {
     let config = LauncherConfig::load().map_err(|e| e.to_string())?;
-    tweaks::SystemTweaks::clear_shader_cache(&config.prefix_dir).map_err(|e| e.to_string())
+    tweaks::SystemTweaks::clear_shader_cache(&config.prefix_dir, &config.game_dir)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -450,16 +528,58 @@ async fn pick_path(
     .map_err(|e| e.to_string())?
 }
 
+fn validate_external_url(url: &str) -> Result<&str, String> {
+    let trimmed = url.trim();
+    if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
+        return Err("Solo se permiten URLs con esquema http:// o https://".to_string());
+    }
+    if trimmed.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err("La URL contiene caracteres inválidos.".to_string());
+    }
+    Ok(trimmed)
+}
+
+fn read_log_tail(path: &std::path::Path, max_bytes: u64) -> std::io::Result<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let truncated = len > max_bytes;
+    if truncated {
+        file.seek(SeekFrom::End(-(max_bytes as i64)))?;
+    }
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)?;
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    if truncated {
+        Ok(format!(
+            "[... mostrando los últimos {} KB de {} KB ...]\n{}",
+            max_bytes / 1024,
+            len / 1024,
+            text
+        ))
+    } else {
+        Ok(text)
+    }
+}
+
 #[tauri::command]
 fn open_external(url: String) -> Result<(), String> {
-    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    let safe_url = validate_external_url(&url)?;
+    std::process::Command::new("xdg-open")
+        .arg(safe_url)
+        .spawn()
+        .map_err(|e| format!("No se pudo abrir el enlace externo: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
-fn get_logs() -> Result<String, String> {
+async fn get_logs() -> Result<String, String> {
     let config = LauncherConfig::load().map_err(|e| e.to_string())?;
-    std::fs::read_to_string(config.log_file_path()).map_err(|e| e.to_string())
+    let log_path = config.log_file_path();
+    tokio::task::spawn_blocking(move || read_log_tail(&log_path, 256 * 1024))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -469,13 +589,31 @@ fn clear_logs() -> Result<(), String> {
 }
 
 #[tauri::command]
-fn get_auth_state() -> Result<auth::AuthStatusPayload, String> {
-    Ok(auth::AuthManager::get_status())
+fn cancel_auth_flow(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut guard = state.auth_cancel.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(notify) = guard.take() {
+        notify.notify_waiters();
+    }
+    Ok(())
 }
 
 #[tauri::command]
-async fn start_auth_flow(app_handle: tauri::AppHandle, channel: String) -> Result<String, String> {
-    let (port, rx) = auth::AuthManager::listen_for_auth_callback(55000)
+async fn start_auth_flow(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    channel: String,
+    remember: Option<bool>,
+) -> Result<String, String> {
+    let persist = remember.unwrap_or(true);
+    let cancel_notify = Arc::new(tokio::sync::Notify::new());
+    {
+        let mut guard = state.auth_cancel.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(prev) = guard.replace(cancel_notify.clone()) {
+            prev.notify_waiters();
+        }
+    }
+
+    let (port, rx) = auth::AuthManager::listen_for_auth_callback(55000, cancel_notify, persist)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -487,6 +625,7 @@ async fn start_auth_flow(app_handle: tauri::AppHandle, channel: String) -> Resul
         .spawn();
 
     let app_handle_clone = app_handle.clone();
+    let ephemeral_lock = state.ephemeral_session.clone();
 
     tokio::spawn(async move {
         match rx.await {
@@ -495,13 +634,19 @@ async fn start_auth_flow(app_handle: tauri::AppHandle, channel: String) -> Resul
                     "✓ Sesión oficial Netmarble NM recibida para {}",
                     session.profile_name
                 );
-                let status = auth::AuthManager::get_status();
+                let status = auth::AuthManager::status_from_session(&session);
+                let profile_name = session.profile_name.clone();
+                if persist {
+                    *ephemeral_lock.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                } else {
+                    *ephemeral_lock.lock().unwrap_or_else(|e| e.into_inner()) = Some(session);
+                }
                 let _ = app_handle_clone.emit(
                     "auth-status-changed",
                     serde_json::json!({
                         "success": true,
                         "status": status,
-                        "profile_name": session.profile_name
+                        "profile_name": profile_name
                     }),
                 );
             }
@@ -524,24 +669,40 @@ async fn start_auth_flow(app_handle: tauri::AppHandle, channel: String) -> Resul
 #[tauri::command]
 async fn manual_auth(
     app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
     input: String,
+    remember: Option<bool>,
 ) -> Result<auth::AuthStatusPayload, String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err("El token, URL o payload no puede estar vacío.".to_string());
     }
 
-    let session = auth::AuthManager::process_auth_result(trimmed)
+    let persist = remember.unwrap_or(true);
+    let session = auth::AuthManager::process_auth_result_with_persist(trimmed, persist)
         .await
         .map_err(|e| e.to_string())?;
 
-    let status = auth::AuthManager::get_status();
+    let status = auth::AuthManager::status_from_session(&session);
+    let profile_name = session.profile_name.clone();
+    if persist {
+        *state
+            .ephemeral_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+    } else {
+        *state
+            .ephemeral_session
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(session);
+    }
+
     let _ = app_handle.emit(
         "auth-status-changed",
         serde_json::json!({
             "success": true,
             "status": status,
-            "profile_name": session.profile_name
+            "profile_name": profile_name
         }),
     );
 
@@ -549,7 +710,11 @@ async fn manual_auth(
 }
 
 #[tauri::command]
-fn logout(app_handle: tauri::AppHandle) -> Result<(), String> {
+fn logout(app_handle: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    *state
+        .ephemeral_session
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = None;
     auth::AuthManager::clear_session().map_err(|e| e.to_string())?;
     let _ = app_handle.emit(
         "auth-status-changed",
@@ -562,6 +727,71 @@ fn logout(app_handle: tauri::AppHandle) -> Result<(), String> {
 }
 
 // ------------------------------------------------------------
+
+const DEFAULT_BG_MANIFEST_JSON: &str = include_str!("../ui/backgrounds.json");
+
+#[tauri::command]
+async fn get_background_media(
+    version: Option<String>,
+) -> Result<api::ResolvedBackgroundMedia, String> {
+    let config = LauncherConfig::load().unwrap_or_default();
+    let api_client = api::ApiClient::new();
+
+    let resolved_version = match version.filter(|v| !v.trim().is_empty()) {
+        Some(v) => v,
+        None => api_client
+            .fetch_build_info()
+            .await
+            .map(|b| b.version)
+            .unwrap_or_else(|_| "default".to_string()),
+    };
+
+    let manifest = if !config.background_manifest_url.trim().is_empty() {
+        match api_client
+            .fetch_remote_manifest(config.background_manifest_url.trim())
+            .await
+        {
+            Ok(remote) => remote,
+            Err(_) => serde_json::from_str(DEFAULT_BG_MANIFEST_JSON).unwrap_or_default(),
+        }
+    } else {
+        serde_json::from_str(DEFAULT_BG_MANIFEST_JSON).unwrap_or_default()
+    };
+
+    let entry = api::ApiClient::resolve_manifest_entry(&manifest, &resolved_version);
+    let cache_dir = LauncherConfig::app_media_cache_dir();
+
+    let cached_video_path = if config.animated_background && entry.video_url.starts_with("https://") {
+        api_client
+            .cache_media_file(&entry.video_url, &cache_dir, &resolved_version, "video", "mp4")
+            .await
+            .ok()
+            .map(|p| p.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    let cached_poster_path = if entry.poster_url.starts_with("https://") {
+        api_client
+            .cache_media_file(&entry.poster_url, &cache_dir, &resolved_version, "poster", "jpg")
+            .await
+            .ok()
+            .map(|p| p.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    Ok(api::ResolvedBackgroundMedia {
+        version: resolved_version,
+        animated: config.animated_background,
+        video_url: entry.video_url,
+        poster_url: entry.poster_url,
+        cached_video_path,
+        cached_poster_path,
+        slides: entry.slides,
+    })
+}
+
 // MAIN ENTRY POINT (CLI & GUI)
 // ------------------------------------------------------------
 
@@ -580,9 +810,15 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    if args.download || args.update {
+    if args.download {
         let rt = tokio::runtime::Runtime::new()?;
         rt.block_on(run_headless_download_and_install(&config))?;
+        return Ok(());
+    }
+
+    if args.update {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(run_headless_update(&config))?;
         return Ok(());
     }
 
@@ -605,16 +841,13 @@ fn main() -> Result<()> {
         })
         .invoke_handler(tauri::generate_handler![
             get_launcher_status,
+            get_background_media,
             start_download,
-            downloader::download_with_resume,
-            downloader::verify_game_files,
             cancel_download,
             launch_game,
             get_config_and_runners,
             save_config,
             apply_fps_tweak,
-            apply_ue5_tweaks,
-            is_running_in_gamescope,
             clear_shader_cache,
             rewrite_manifest,
             verify_installed_game,
@@ -623,8 +856,8 @@ fn main() -> Result<()> {
             open_external,
             get_logs,
             clear_logs,
-            get_auth_state,
             start_auth_flow,
+            cancel_auth_flow,
             manual_auth,
             logout,
         ])
@@ -703,6 +936,30 @@ async fn print_status(config: &LauncherConfig) -> Result<()> {
     Ok(())
 }
 
+async fn run_headless_update(config: &LauncherConfig) -> Result<()> {
+    println!("Comprobando actualizaciones contra Netmarble API...");
+    let api = api::ApiClient::new();
+    let build = api.fetch_build_info().await?;
+
+    if config.is_installed() {
+        if let Some(manifest) = installer::Installer::read_manifest(&config.game_dir) {
+            if manifest.build_sequence >= build.build_sequence {
+                println!(
+                    "✓ El cliente ya está actualizado (Versión {}, Build {}).",
+                    manifest.version, manifest.build_sequence
+                );
+                return Ok(());
+            }
+            println!(
+                "Actualización disponible: Build {} -> {} (v{}).",
+                manifest.build_sequence, build.build_sequence, build.version
+            );
+        }
+    }
+
+    run_headless_download_and_install(config).await
+}
+
 async fn run_headless_download_and_install(config: &LauncherConfig) -> Result<()> {
     println!("Consultando datos de build a Netmarble...");
     let api = api::ApiClient::new();
@@ -735,10 +992,10 @@ async fn run_headless_download_and_install(config: &LauncherConfig) -> Result<()
             break;
         }
         print!(
-            "\r[{:3.1}%] {} / {} | {} | ETA: {} | {}",
+            "\r[{:3.1}%] {:.1} MB / {:.1} MB | {} | ETA: {} | {}",
             prog.progress_ratio * 100.0,
-            format!("{:.1} MB", prog.downloaded_mb()),
-            format!("{:.1} MB", prog.total_mb()),
+            prog.downloaded_mb(),
+            prog.total_mb(),
             prog.speed_formatted(),
             prog.eta_formatted(),
             prog.status
@@ -756,7 +1013,6 @@ async fn run_headless_download_and_install(config: &LauncherConfig) -> Result<()
         &build.version,
         build.build_sequence,
         None,
-        None,
     )?;
 
     let _ = std::fs::remove_file(&downloaded_file);
@@ -765,7 +1021,7 @@ async fn run_headless_download_and_install(config: &LauncherConfig) -> Result<()
 }
 
 fn run_headless_play(config: &LauncherConfig) -> Result<()> {
-    let mut child = runner::GameRunner::launch(config)?;
+    let mut child = runner::GameRunner::launch(config, None)?;
     println!(
         "Mongil: Star Dive iniciado (PID: {}). Esperando finalización...",
         child.id()
@@ -777,7 +1033,7 @@ fn run_headless_play(config: &LauncherConfig) -> Result<()> {
 
 fn update_lutris_config(config: &LauncherConfig) -> Result<()> {
     let lutris_games_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/home/shidox"))
+        .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
         .join("lutris")
         .join("games");
@@ -826,4 +1082,33 @@ fn update_lutris_config(config: &LauncherConfig) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_log_tail, validate_external_url};
+    use std::fs;
+
+    #[test]
+    fn validate_external_url_permite_solo_http_https() {
+        assert!(validate_external_url("https://stardive.netmarble.com/").is_ok());
+        assert!(validate_external_url("http://127.0.0.1:55000/redirectLauncher").is_ok());
+        assert!(validate_external_url("file:///etc/passwd").is_err());
+        assert!(validate_external_url("javascript:alert(1)").is_err());
+        assert!(validate_external_url("https://example.com/\nwhoami").is_err());
+    }
+
+    #[test]
+    fn read_log_tail_trunca_archivos_grandes() {
+        let tmp =
+            std::env::temp_dir().join(format!("stardive_log_tail_{}.log", std::process::id()));
+        let content = format!("{}FINAL_MARKER", "A".repeat(4096));
+        fs::write(&tmp, &content).unwrap();
+
+        let tail = read_log_tail(&tmp, 1024).unwrap();
+        assert!(tail.contains("FINAL_MARKER"));
+        assert!(tail.contains("mostrando los últimos"));
+
+        let _ = fs::remove_file(&tmp);
+    }
 }

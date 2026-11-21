@@ -1,11 +1,9 @@
-#![allow(dead_code)]
 use anyhow::{anyhow, Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 
 pub const API_BUILDS_URL: &str =
     "https://apis.netmarble.com/cpplauncher/api/game/monster2/builds?buildCode=A";
-pub const API_METADATA_URL: &str = "https://apis.netmarble.com/cpplauncher/api/games/monster2";
 
 pub const HEADER_CH_KEY: &str = "X-NM-LAUNCHER-CH";
 pub const HEADER_CH_VAL: &str = "ypWjRL2aNi";
@@ -19,19 +17,6 @@ pub struct BuildInfo {
     pub download_url: String,
     pub file_hash: String,
     pub file_size: u64,
-    pub raw_json: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GameMetadata {
-    pub game_code: String,
-    pub title: String,
-    pub banner_url: Option<String>,
-    pub logo_url: Option<String>,
-    pub official_site_url: Option<String>,
-    pub discord_url: Option<String>,
-    pub forum_url: Option<String>,
-    pub shop_url: Option<String>,
 }
 
 pub struct ApiClient {
@@ -41,6 +26,18 @@ pub struct ApiClient {
 impl Default for ApiClient {
     fn default() -> Self {
         Self::new()
+    }
+
+    #[test]
+    fn resolve_manifest_entry_usa_version_o_default() {
+        let manifest: super::BackgroundManifest = serde_json::from_str(r#"{
+            "versions": {
+                "1.05.00": { "video_url": "https://cdn.example.com/105.mp4", "poster_url": "", "slides": [] },
+                "default": { "video_url": "", "poster_url": "https://cdn.example.com/default.jpg", "slides": [] }
+            }
+        }"#).unwrap();
+        assert_eq!(ApiClient::resolve_manifest_entry(&manifest, "1.05.00").video_url, "https://cdn.example.com/105.mp4");
+        assert_eq!(ApiClient::resolve_manifest_entry(&manifest, "9.99.00").poster_url, "https://cdn.example.com/default.jpg");
     }
 }
 
@@ -53,6 +50,8 @@ impl ApiClient {
         let client = reqwest::Client::builder()
             .default_headers(headers)
             .user_agent("NetmarbleLauncher/1.0.0 (Linux; x86_64)")
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(30))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
@@ -77,6 +76,10 @@ impl ApiClient {
             .await
             .context("Failed to parse Netmarble builds API JSON")?;
 
+        Self::parse_build_info_json(json)
+    }
+
+    pub fn parse_build_info_json(json: serde_json::Value) -> Result<BuildInfo> {
         // Parse build item from JSON payload.
         // It could be at root, in `data`, or in a list `builds` or `data.builds`.
         let target = if let Some(arr) = json.as_array() {
@@ -96,16 +99,18 @@ impl ApiClient {
         // Extract sequence
         let build_sequence = target
             .get("buildSequence")
+            .or_else(|| target.get("buildSeq"))
             .or_else(|| target.get("seq"))
             .and_then(|v| v.as_u64())
-            .unwrap_or(61);
+            .ok_or_else(|| anyhow!("Campo buildSequence faltante en respuesta de Netmarble API"))?;
 
         // Extract version
         let version = target
             .get("version")
             .or_else(|| target.get("buildVersion"))
             .and_then(|v| v.as_str())
-            .unwrap_or("1.03.00")
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| anyhow!("Campo version faltante en respuesta de Netmarble API"))?
             .to_string();
 
         // Extract download URL
@@ -115,10 +120,9 @@ impl ApiClient {
             .or_else(|| target.get("fileUrl"))
             .or_else(|| target.get("url"))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                "https://monster2.gcdn.netmarble.com/pcclient/monster2/1.03.00/q9izaxluhmox_1787065108316.zip".to_string()
-            });
+            .filter(|s| s.starts_with("https://") || s.starts_with("http://"))
+            .ok_or_else(|| anyhow!("Campo downloadUrl inválido o faltante en Netmarble API"))?
+            .to_string();
 
         // Extract hash
         let file_hash = target
@@ -144,7 +148,7 @@ impl ApiClient {
                     None
                 }
             })
-            .unwrap_or(878_800_000);
+            .unwrap_or(0);
 
         Ok(BuildInfo {
             version,
@@ -152,93 +156,158 @@ impl ApiClient {
             download_url,
             file_hash,
             file_size,
-            raw_json: json,
-        })
-    }
-
-    pub async fn fetch_metadata(&self) -> Result<GameMetadata> {
-        let resp = self
-            .client
-            .get(API_METADATA_URL)
-            .send()
-            .await
-            .context("Failed to connect to Netmarble games metadata API")?;
-
-        if !resp.status().is_success() {
-            return Ok(GameMetadata::default_fallback());
-        }
-
-        let json: serde_json::Value = resp.json().await.unwrap_or_default();
-        let target = json.get("data").unwrap_or(&json);
-
-        let title = target
-            .get("gameName")
-            .or_else(|| target.get("title"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("Mongil: Star Dive")
-            .to_string();
-
-        let banner_url = target
-            .get("backgroundImgUrl")
-            .or_else(|| target.get("bannerImgUrl"))
-            .or_else(|| target.get("bgUrl"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        let logo_url = target
-            .get("logoImgUrl")
-            .or_else(|| target.get("logoUrl"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        let official_site_url = target
-            .get("officialUrl")
-            .or_else(|| target.get("homepageUrl"))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| Some("https://stardive.netmarble.com".to_string()));
-
-        let forum_url = target
-            .get("forumUrl")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| Some("https://forum.netmarble.com/stardive".to_string()));
-
-        let discord_url = target
-            .get("discordUrl")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| Some("https://discord.gg/stardive".to_string()));
-
-        let shop_url = target
-            .get("shopUrl")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
-        Ok(GameMetadata {
-            game_code: "monster2".to_string(),
-            title,
-            banner_url,
-            logo_url,
-            official_site_url,
-            discord_url,
-            forum_url,
-            shop_url,
         })
     }
 }
 
-impl GameMetadata {
-    pub fn default_fallback() -> Self {
-        Self {
-            game_code: "monster2".to_string(),
-            title: "Mongil: Star Dive".to_string(),
-            banner_url: None,
-            logo_url: None,
-            official_site_url: Some("https://stardive.netmarble.com".to_string()),
-            discord_url: Some("https://discord.gg/stardive".to_string()),
-            forum_url: Some("https://forum.netmarble.com/stardive".to_string()),
-            shop_url: None,
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackgroundSlide {
+    pub tag: String,
+    pub title: String,
+    pub desc: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BackgroundEntry {
+    #[serde(default)]
+    pub video_url: String,
+    #[serde(default)]
+    pub poster_url: String,
+    #[serde(default)]
+    pub slides: Vec<BackgroundSlide>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BackgroundManifest {
+    #[serde(default)]
+    pub versions: std::collections::HashMap<String, BackgroundEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedBackgroundMedia {
+    pub version: String,
+    pub animated: bool,
+    pub video_url: String,
+    pub poster_url: String,
+    pub cached_video_path: Option<String>,
+    pub cached_poster_path: Option<String>,
+    pub slides: Vec<BackgroundSlide>,
+}
+
+const MAX_MEDIA_BYTES: usize = 50 * 1024 * 1024;
+
+fn sanitize_version_tag(version: &str) -> String {
+    let cleaned: String = version
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    if cleaned.is_empty() { "default".to_string() } else { cleaned }
+}
+
+fn extension_for_media(url: &str, fallback: &str) -> String {
+    let base = url.split('?').next().unwrap_or(url);
+    if let Some(ext) = base.rsplit('.').next() {
+        let lower = ext.to_ascii_lowercase();
+        if matches!(lower.as_str(), "mp4" | "webm" | "jpg" | "jpeg" | "png" | "webp") {
+            return lower;
         }
+    }
+    fallback.to_string()
+}
+
+impl ApiClient {
+    pub fn resolve_manifest_entry(manifest: &BackgroundManifest, version: &str) -> BackgroundEntry {
+        if let Some(entry) = manifest.versions.get(version) {
+            return entry.clone();
+        }
+        manifest.versions.get("default").cloned().unwrap_or_default()
+    }
+
+    pub async fn fetch_remote_manifest(&self, url: &str) -> Result<BackgroundManifest> {
+        if !url.starts_with("https://") {
+            return Err(anyhow!("La URL del manifiesto de fondos debe usar HTTPS"));
+        }
+        let resp = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("No se pudo descargar el manifiesto de fondos")?;
+        if !resp.status().is_success() {
+            return Err(anyhow!("Manifiesto de fondos devolvió HTTP {}", resp.status()));
+        }
+        let manifest: BackgroundManifest = resp
+            .json()
+            .await
+            .context("JSON de manifiesto de fondos inválido")?;
+        Ok(manifest)
+    }
+
+    pub async fn cache_media_file(
+        &self,
+        url: &str,
+        cache_dir: &std::path::Path,
+        version: &str,
+        kind: &str,
+        fallback_ext: &str,
+    ) -> Result<std::path::PathBuf> {
+        if !url.starts_with("https://") {
+            return Err(anyhow!("Solo se permiten URLs HTTPS para fondos"));
+        }
+        std::fs::create_dir_all(cache_dir)?;
+        let ext = extension_for_media(url, fallback_ext);
+        let filename = format!("{}_{}.{}", sanitize_version_tag(version), kind, ext);
+        let target = cache_dir.join(filename);
+        if target.exists() && std::fs::metadata(&target).map(|m| m.len() > 0).unwrap_or(false) {
+            return Ok(target);
+        }
+
+        let resp = self.client.get(url).send().await?;
+        if !resp.status().is_success() {
+            return Err(anyhow!("Descarga de medio falló con HTTP {}", resp.status()));
+        }
+        if let Some(len) = resp.content_length() {
+            if len as usize > MAX_MEDIA_BYTES {
+                return Err(anyhow!("El fondo excede el límite de 50 MiB"));
+            }
+        }
+        let bytes = resp.bytes().await?;
+        if bytes.len() > MAX_MEDIA_BYTES {
+            return Err(anyhow!("El fondo excede el límite de 50 MiB"));
+        }
+        let tmp = target.with_extension(format!("{}.tmp", ext));
+        std::fs::write(&tmp, &bytes)?;
+        std::fs::rename(&tmp, &target)?;
+        Ok(target)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ApiClient;
+
+    #[test]
+    fn parse_build_info_rechaza_payload_incompleto_sin_fallback_silencioso() {
+        let incomplete = serde_json::json!({ "data": {} });
+        assert!(ApiClient::parse_build_info_json(incomplete).is_err());
+    }
+
+    #[test]
+    fn parse_build_info_acepta_payload_valido() {
+        let valid = serde_json::json!({
+            "data": [{
+                "buildSequence": 72,
+                "version": "1.04.00",
+                "buildDownloadUrl": "https://cdn.example.com/client.zip",
+                "buildFileHash": "abc123",
+                "buildFileSize": "123456"
+            }]
+        });
+        let info = ApiClient::parse_build_info_json(valid).unwrap();
+        assert_eq!(info.build_sequence, 72);
+        assert_eq!(info.version, "1.04.00");
+        assert_eq!(info.download_url, "https://cdn.example.com/client.zip");
+        assert_eq!(info.file_size, 123456);
     }
 }

@@ -70,14 +70,46 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Background Keyart & Scrims */
+/* Background Keyart, Dynamic Video & Scrims */
 .bg-art {
   position: fixed;
   inset: 0;
   background-image: url('assets/bg.jpg');
   background-size: cover;
   background-position: center;
+  z-index: -4;
+  transform: scale(1.0);
+  transition: opacity 0.45s var(--m3-ease);
+}
+
+.bg-art.ambient-motion {
+  animation: bg-ambient-drift 28s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+.bg-art.ambient-paused {
+  animation-play-state: paused;
+}
+
+@keyframes bg-ambient-drift {
+  0% { transform: scale(1.02) translate3d(0, 0, 0); }
+  100% { transform: scale(1.07) translate3d(-1.2%, -0.8%, 0); }
+}
+
+.bg-video {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   z-index: -3;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.55s var(--m3-ease);
+}
+
+.bg-video.ready {
+  opacity: 1;
 }
 
 .bg-vignette-top {

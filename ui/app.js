@@ -49,6 +49,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupModals();
   setupButtons();
   await refreshStatus();
+  await loadDynamicBackground();
+  setupBackgroundLifecycle();
   setupTauriListeners();
 });
 
@@ -162,6 +164,14 @@ function setupTauriListeners() {
         refreshStatus();
       }, 1000);
     }
+  });
+
+  // Download or extraction error from Rust backend
+  listen("download-error", (event) => {
+    const data = event.payload;
+    currentStatus.is_downloading = false;
+    updateUI();
+    alert(data && data.error ? data.error : "Error durante la descarga o instalación.");
   });
 
   // Game state changes (terminated / running)
@@ -305,8 +315,20 @@ function setupButtons() {
     document.getElementById("modal-quick-fps").style.display = "none";
   });
   document.getElementById("btn-save-quick-fps").addEventListener("click", async () => {
-    const selected = document.querySelector('input[name="quick-fps"]:checked').value;
-    await invoke("apply_fps_tweak", { fpsLimit: parseInt(selected, 10), vsync: false });
+    const selected = parseInt(document.querySelector('input[name="quick-fps"]:checked').value, 10);
+    let vsync = false;
+    try {
+      const res = await invoke("get_config_and_runners");
+      if (res && res.config) {
+        currentConfig = res.config;
+        currentConfig.fps_limit = selected;
+        vsync = !!currentConfig.vsync;
+        await invoke("save_config", { config: currentConfig });
+      }
+    } catch (err) {
+      console.error("Error al guardar quick-fps en config:", err);
+    }
+    await invoke("apply_fps_tweak", { fpsLimit: selected, vsync });
     document.getElementById("modal-quick-fps").style.display = "none";
   });
 
@@ -347,7 +369,10 @@ function setupButtons() {
   document.getElementById("btn-login-email").addEventListener("click", () => startAuth("email"));
   document.getElementById("btn-login-apple").addEventListener("click", () => startAuth("apple"));
 
-  document.getElementById("btn-cancel-auth").addEventListener("click", () => {
+  document.getElementById("btn-cancel-auth").addEventListener("click", async () => {
+    try {
+      await invoke("cancel_auth_flow");
+    } catch (_) {}
     document.getElementById("auth-select-view").style.display = "block";
     document.getElementById("auth-waiting-view").style.display = "none";
   });
@@ -358,7 +383,10 @@ function setupButtons() {
     box.style.display = box.style.display === "none" ? "flex" : "none";
   });
 
-  document.getElementById("btn-submit-manual").addEventListener("click", submitManualAuth);
+  document.getElementById("btn-submit-manual").addEventListener("click", () => {
+    const input = document.getElementById("manual-token-input");
+    submitManualAuth(input ? input.value.trim() : "");
+  });
 
   // Copy Auth URL
   document.getElementById("btn-copy-auth-url").addEventListener("click", () => {
@@ -370,10 +398,10 @@ function setupButtons() {
 
   const btnReopen = document.getElementById("btn-reopen-auth-url");
   if (btnReopen) {
-    btnReopen.addEventListener("click", () => {
+    btnReopen.addEventListener("click", async () => {
       const input = document.getElementById("auth-fallback-url");
       if (input && input.value) {
-        window.open(input.value, "_blank");
+        await invoke("open_external", { url: input.value });
       }
     });
   }
@@ -446,7 +474,9 @@ async function startAuth(channel) {
     document.getElementById("auth-select-view").style.display = "none";
     document.getElementById("auth-waiting-view").style.display = "block";
 
-    const authUrl = await invoke("start_auth_flow", { channel });
+    const rememberEl = document.getElementById("chk-remember-login");
+    const remember = rememberEl ? !!rememberEl.checked : true;
+    const authUrl = await invoke("start_auth_flow", { channel, remember });
     if (authUrl) {
       document.getElementById("auth-fallback-url").value = authUrl;
       document.getElementById("auth-url-box").style.display = "flex";
@@ -469,7 +499,9 @@ async function submitManualAuth(tokenOverride) {
     return;
   }
   try {
-    const status = await invoke("manual_auth", { input });
+    const rememberEl = document.getElementById("chk-remember-login");
+    const remember = rememberEl ? !!rememberEl.checked : true;
+    const status = await invoke("manual_auth", { input, remember });
     if (status) {
       closeAuthModal();
       await refreshStatus();
@@ -521,7 +553,10 @@ function setInlineFeedback(el, type, text) {
   } else if (type === "error") {
     iconSvg = `<svg viewBox="0 0 24 24" class="svg-feedback"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`;
   }
-  el.innerHTML = `${iconSvg}<span>${text}</span>`;
+  el.innerHTML = iconSvg;
+  const textSpan = document.createElement("span");
+  textSpan.textContent = text;
+  el.appendChild(textSpan);
 }
 
 // Setup Settings Modal & Tabs
@@ -601,10 +636,13 @@ function setupModals() {
       currentConfig.fps_limit = parseInt(fpsRadio.value, 10);
     }
     currentConfig.vsync = document.getElementById("cfg-vsync").checked;
+    const animBgEl = document.getElementById("cfg-animated-bg");
+    if (animBgEl) currentConfig.animated_background = animBgEl.checked;
 
     await invoke("save_config", { config: currentConfig });
     modal.style.display = "none";
     await refreshStatus();
+    await loadDynamicBackground();
   });
 
   document.getElementById("cfg-render-api").addEventListener("change", syncDxvkAsyncState);
@@ -756,6 +794,8 @@ async function loadSettingsForm() {
     document.getElementById("cfg-prefix-dir").value = currentConfig.prefix_dir || "";
     document.getElementById("cfg-args").value = currentConfig.launch_args || "NMENV=nmp";
     document.getElementById("cfg-close-action").value = currentConfig.close_action || "minimize";
+    const animBgEl = document.getElementById("cfg-animated-bg");
+    if (animBgEl) animBgEl.checked = currentConfig.animated_background !== false;
 
     document.getElementById("cfg-render-api").value = currentConfig.render_api || "DirectX12";
     document.getElementById("cfg-use-umu").checked = !!currentConfig.use_umu;
@@ -818,4 +858,123 @@ async function loadSettingsForm() {
   } catch (err) {
     console.error("Failed to load settings:", err);
   }
+}
+
+
+// ============================================================
+// DYNAMIC PATCH BACKGROUND (Video / Keyart + Smart Pause)
+// ============================================================
+let bgAnimatedEnabled = true;
+
+function isAnyModalOpen() {
+  const ids = ["modal-settings", "modal-logs", "modal-auth", "modal-account"];
+  return ids.some((id) => {
+    const el = document.getElementById(id);
+    return el && el.style.display && el.style.display !== "none";
+  });
+}
+
+function syncBackgroundPlayback() {
+  const video = document.getElementById("bg-video");
+  const bgArt = document.getElementById("bg-art");
+  const shouldPause = !bgAnimatedEnabled || document.hidden || currentStatus.is_playing || isAnyModalOpen();
+
+  if (video && video.src) {
+    if (shouldPause) {
+      video.pause();
+    } else {
+      video.play().catch(() => {});
+    }
+  }
+  if (bgArt) {
+    const hasVideo = video && video.classList.contains("ready");
+    bgArt.classList.toggle("ambient-motion", bgAnimatedEnabled && !hasVideo);
+    bgArt.classList.toggle("ambient-paused", shouldPause);
+  }
+}
+
+function setupBackgroundLifecycle() {
+  document.addEventListener("visibilitychange", syncBackgroundPlayback);
+  window.addEventListener("blur", () => {
+    const video = document.getElementById("bg-video");
+    if (video && !video.paused) video.pause();
+    const bgArt = document.getElementById("bg-art");
+    if (bgArt) bgArt.classList.add("ambient-paused");
+  });
+  window.addEventListener("focus", syncBackgroundPlayback);
+}
+
+async function loadDynamicBackground() {
+  const video = document.getElementById("bg-video");
+  const bgArt = document.getElementById("bg-art");
+  const version = currentStatus.server_version || currentStatus.installed_version || "default";
+
+  let media = null;
+  try {
+    media = await invoke("get_background_media", { version });
+  } catch (err) {
+    console.warn("Dynamic background fallback:", err);
+  }
+
+  // Fallback for plain browser preview (outside Tauri)
+  if (!media) {
+    try {
+      const resp = await fetch("backgrounds.json");
+      if (resp.ok) {
+        const manifest = await resp.json();
+        const entry = (manifest.versions && (manifest.versions[version] || manifest.versions.default)) || {};
+        media = {
+          version,
+          animated: true,
+          video_url: entry.video_url || "",
+          poster_url: entry.poster_url || "",
+          slides: entry.slides || [],
+        };
+      }
+    } catch (_) {}
+  }
+
+  bgAnimatedEnabled = media ? media.animated !== false : true;
+
+  if (media && media.poster_url && bgArt) {
+    bgArt.style.backgroundImage = `url('${media.poster_url}')`;
+  }
+
+  if (media && Array.isArray(media.slides) && media.slides.length > 0) {
+    const tagEl = document.getElementById("carousel-tag");
+    const titleEl = document.getElementById("carousel-title");
+    const descEl = document.getElementById("carousel-desc");
+    if (tagEl && titleEl && descEl) {
+      tagEl.textContent = media.slides[0].tag || tagEl.textContent;
+      titleEl.textContent = media.slides[0].title || titleEl.textContent;
+      descEl.textContent = media.slides[0].desc || descEl.textContent;
+    }
+  }
+
+  if (video) {
+    const srcUrl = (bgAnimatedEnabled && media && media.video_url) ? media.video_url : "";
+    if (srcUrl) {
+      if (video.getAttribute("data-src") !== srcUrl) {
+        video.classList.remove("ready");
+        video.setAttribute("data-src", srcUrl);
+        video.src = srcUrl;
+        video.oncanplay = () => {
+          video.classList.add("ready");
+          syncBackgroundPlayback();
+        };
+        video.onerror = () => {
+          video.classList.remove("ready");
+          video.removeAttribute("src");
+          syncBackgroundPlayback();
+        };
+      }
+    } else {
+      video.pause();
+      video.classList.remove("ready");
+      video.removeAttribute("src");
+      video.removeAttribute("data-src");
+    }
+  }
+
+  syncBackgroundPlayback();
 }

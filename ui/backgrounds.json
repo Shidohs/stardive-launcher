@@ -1,0 +1,46 @@
+{
+  "versions": {
+    "1.05.00": {
+      "video_url": "",
+      "poster_url": "",
+      "slides": [
+        {
+          "tag": "ACTUALIZACIÓN 1.05",
+          "title": "Cliente Nativo Linux v1.05.00",
+          "desc": "Compatibilidad actualizada con GE-Proton, VKD3D-Proton y detección automática de parches."
+        },
+        {
+          "tag": "EVENTO",
+          "title": "Recompensas de Temporada Activas",
+          "desc": "Reclama personajes estelares, cupones y recursos exclusivos desde el portal oficial."
+        },
+        {
+          "tag": "TIENDA",
+          "title": "Novedades en la Web Store",
+          "desc": "Paquetes de actualización y bonificaciones disponibles en la tienda web de Netmarble."
+        }
+      ]
+    },
+    "default": {
+      "video_url": "",
+      "poster_url": "",
+      "slides": [
+        {
+          "tag": "ACTUALIZACIÓN",
+          "title": "Cliente Nativo Linux",
+          "desc": "Bypass completo de Electron y CrashSight VEH con GE-Proton y DXVK/VKD3D."
+        },
+        {
+          "tag": "EVENTO",
+          "title": "Recompensas de Pre-registro Activas",
+          "desc": "Reclama tus personajes estelares y armas exclusivas en el portal de cupones."
+        },
+        {
+          "tag": "TIENDA",
+          "title": "Descuentos en la Web Store",
+          "desc": "Paquetes especiales y cristales con bonificación de lanzamiento."
+        }
+      ]
+    }
+  }
+}

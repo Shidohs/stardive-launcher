@@ -42,7 +42,7 @@ impl Default for ApiClient {
 
     #[test]
     fn parse_official_site_background_extrae_video_y_poster() {
-        let html = r#"poster:"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Fposter.jpg",bgGB_pc:"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Fhero.mp4""#;
+        let html = r#"bgGB_pc:"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Fhero.mp4",posterGB_pc:"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Fposter.jpg""#;
         let (video, poster) = ApiClient::parse_official_site_background(html).unwrap();
         assert_eq!(video, "https://sgimage.netmarble.com/images/hero.mp4");
         assert_eq!(poster, "https://sgimage.netmarble.com/images/poster.jpg");
@@ -318,17 +318,8 @@ impl ApiClient {
             .or_else(|| extract_quoted_field(&normalized, "bg_pc"))
             .filter(|u| u.ends_with(".mp4") || u.ends_with(".webm"))?;
 
-        // Buscar póster cercano antes de bgGB_pc/bg_pc si existe
-        let poster = normalized
-            .find("bgGB_pc:\"")
-            .or_else(|| normalized.find("bg_pc:\""))
-            .and_then(|pos| {
-                let window_start = pos.saturating_sub(300);
-                let slice = &normalized[window_start..pos];
-                let jpg_end = slice.rfind(".jpg")? + 4;
-                let url_start = slice[..jpg_end].rfind("https://")?;
-                Some(slice[url_start..jpg_end].to_string())
-            })
+        let poster = extract_quoted_field(&normalized, "posterGB_pc")
+            .or_else(|| extract_quoted_field(&normalized, "poster_pc"))
             .unwrap_or_default();
 
         Some((video, poster))

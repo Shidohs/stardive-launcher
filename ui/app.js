@@ -43,8 +43,22 @@ let currentStatus = {
 
 let currentConfig = null;
 
+// Restore last known patch poster immediately before async fetch (zero old-art flash)
+function applyCachedPosterImmediately() {
+  const bgArt = document.getElementById("bg-art");
+  if (!bgArt) return;
+  try {
+    const cachedPoster = localStorage.getItem("stardive_last_poster");
+    if (cachedPoster) {
+      bgArt.style.backgroundImage = `url('${cachedPoster}')`;
+      bgArt.classList.add("ready");
+    }
+  } catch (_) {}
+}
+
 // Initialize on DOM load
 document.addEventListener("DOMContentLoaded", async () => {
+  applyCachedPosterImmediately();
   setupCarousel();
   setupModals();
   setupButtons();
@@ -966,8 +980,14 @@ async function loadDynamicBackground() {
 
   bgAnimatedEnabled = media ? media.animated !== false : true;
 
-  if (media && media.poster_url && bgArt) {
-    bgArt.style.backgroundImage = `url('${media.poster_url}')`;
+  const resolvedPoster = (media && media.poster_url) ? media.poster_url : "assets/bg.jpg";
+  if (bgArt) {
+    bgArt.style.backgroundImage = `url('${resolvedPoster}')`;
+    bgArt.classList.add("ready");
+  }
+  if (media && media.poster_url) {
+    try { localStorage.setItem("stardive_last_poster", media.poster_url); } catch (_) {}
+    if (video) video.poster = media.poster_url;
   }
 
   if (media && Array.isArray(media.slides) && media.slides.length > 0) {

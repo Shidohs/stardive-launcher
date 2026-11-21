@@ -921,7 +921,7 @@ function isAnyModalOpen() {
 function syncBackgroundPlayback() {
   const video = document.getElementById("bg-video");
   const bgArt = document.getElementById("bg-art");
-  const shouldPause = !bgAnimatedEnabled || document.hidden || currentStatus.is_playing || isAnyModalOpen();
+  const shouldPause = !bgAnimatedEnabled || document.hidden || currentStatus.is_playing;
 
   if (video && video.src) {
     if (shouldPause) {
@@ -939,13 +939,6 @@ function syncBackgroundPlayback() {
 
 function setupBackgroundLifecycle() {
   document.addEventListener("visibilitychange", syncBackgroundPlayback);
-  window.addEventListener("blur", () => {
-    const video = document.getElementById("bg-video");
-    if (video && !video.paused) video.pause();
-    const bgArt = document.getElementById("bg-art");
-    if (bgArt) bgArt.classList.add("ambient-paused");
-  });
-  window.addEventListener("focus", syncBackgroundPlayback);
 }
 
 async function loadDynamicBackground() {
@@ -1000,8 +993,7 @@ async function loadDynamicBackground() {
       if (video.getAttribute("data-src") !== srcUrl) {
         video.classList.remove("ready");
         video.setAttribute("data-src", srcUrl);
-        video.src = srcUrl;
-        video.oncanplay = () => {
+        video.oncanplaythrough = () => {
           video.classList.add("ready");
           syncBackgroundPlayback();
         };
@@ -1010,10 +1002,32 @@ async function loadDynamicBackground() {
           video.removeAttribute("src");
           syncBackgroundPlayback();
         };
+        // Pre-buffer into RAM blob when allowed so playback never stalls on CDN range requests
+        fetch(srcUrl)
+          .then((r) => (r.ok ? r.blob() : Promise.reject(new Error("HTTP " + r.status))))
+          .then((blob) => {
+            if (video.getAttribute("data-src") !== srcUrl) return;
+            const prevBlob = video.getAttribute("data-blob-url");
+            if (prevBlob) URL.revokeObjectURL(prevBlob);
+            const blobUrl = URL.createObjectURL(blob);
+            video.setAttribute("data-blob-url", blobUrl);
+            video.src = blobUrl;
+            video.load();
+          })
+          .catch(() => {
+            if (video.getAttribute("data-src") !== srcUrl) return;
+            video.src = srcUrl;
+            video.load();
+          });
       }
     } else {
       video.pause();
       video.classList.remove("ready");
+      const prevBlob = video.getAttribute("data-blob-url");
+      if (prevBlob) {
+        URL.revokeObjectURL(prevBlob);
+        video.removeAttribute("data-blob-url");
+      }
       video.removeAttribute("src");
       video.removeAttribute("data-src");
     }

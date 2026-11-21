@@ -766,12 +766,15 @@ async fn get_background_media(
             api_client.fetch_official_site_background(),
             api_client.fetch_official_forum_slides(),
         );
-        if let Ok((live_video, live_poster)) = bg_res {
+        if let Ok((live_video, live_poster, live_overlay)) = bg_res {
             if !live_video.is_empty() {
                 entry.video_url = live_video;
             }
             if !live_poster.is_empty() {
                 entry.poster_url = live_poster;
+            }
+            if !live_overlay.is_empty() {
+                entry.overlay_url = live_overlay;
             }
         }
         if !forum_slides.is_empty() {
@@ -806,6 +809,7 @@ async fn get_background_media(
         animated: config.animated_background,
         video_url: entry.video_url,
         poster_url: entry.poster_url,
+        overlay_url: entry.overlay_url,
         cached_video_path,
         cached_poster_path,
         slides: entry.slides,

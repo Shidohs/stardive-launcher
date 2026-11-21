@@ -263,9 +263,28 @@ body {
   fill: currentColor;
 }
 
-/* Center Stage */
+/* Center Stage & Official Patch Overlay Layer */
 .center-stage {
   flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  padding: 12px 0;
+}
+
+.hero-overlay-img {
+  max-width: min(620px, 68vw);
+  max-height: 210px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  opacity: 0;
+  transition: opacity 0.45s var(--m3-ease);
+}
+
+.hero-overlay-img.ready {
+  opacity: 1;
 }
 
 /* ============================================================ */

@@ -69,8 +69,13 @@ async function refreshStatus() {
 
 // Update UI elements based on state
 function updateUI() {
-  // Update Chips
-  document.getElementById("version-text").textContent = `v${currentStatus.installed_version || "1.05.00"}`;
+  // Update Chips (auto-synced from live server/installed version)
+  const instVer = (currentStatus.installed_version || "").trim();
+  const srvVer = (currentStatus.server_version || "").trim();
+  const versionLabel = (currentStatus.is_installed && instVer && srvVer && instVer !== srvVer)
+    ? `v${instVer} → v${srvVer}`
+    : `v${srvVer || instVer || "1.05.00"}`;
+  document.getElementById("version-text").textContent = versionLabel;
   document.getElementById("runner-text").textContent = currentStatus.runner_name || "GE-Proton";
   document.getElementById("gamemode-text").textContent = currentStatus.has_gamemode ? "GameMode ON" : "GameMode OFF";
 
@@ -945,7 +950,8 @@ async function loadDynamicBackground() {
     const titleEl = document.getElementById("carousel-title");
     const descEl = document.getElementById("carousel-desc");
     if (tagEl && titleEl && descEl) {
-      tagEl.textContent = media.slides[0].tag || tagEl.textContent;
+      const activeVer = currentStatus.server_version || media.version || "";
+      tagEl.textContent = activeVer ? `ACTUALIZACIÓN v${activeVer}` : (media.slides[0].tag || tagEl.textContent);
       titleEl.textContent = media.slides[0].title || titleEl.textContent;
       descEl.textContent = media.slides[0].desc || descEl.textContent;
     }

@@ -39,6 +39,14 @@ impl Default for ApiClient {
         assert_eq!(ApiClient::resolve_manifest_entry(&manifest, "1.05.00").video_url, "https://cdn.example.com/105.mp4");
         assert_eq!(ApiClient::resolve_manifest_entry(&manifest, "9.99.00").poster_url, "https://cdn.example.com/default.jpg");
     }
+
+    #[test]
+    fn parse_official_site_background_extrae_video_y_poster() {
+        let html = r#"poster:"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Fposter.jpg",bgGB_pc:"https:\u002F\u002Fsgimage.netmarble.com\u002Fimages\u002Fhero.mp4""#;
+        let (video, poster) = ApiClient::parse_official_site_background(html).unwrap();
+        assert_eq!(video, "https://sgimage.netmarble.com/images/hero.mp4");
+        assert_eq!(poster, "https://sgimage.netmarble.com/images/poster.jpg");
+    }
 }
 
 impl ApiClient {
@@ -280,6 +288,63 @@ impl ApiClient {
         std::fs::write(&tmp, &bytes)?;
         std::fs::rename(&tmp, &target)?;
         Ok(target)
+    }
+}
+
+
+pub const OFFICIAL_SITE_URL: &str = "https://stardive.netmarble.com/es";
+
+fn extract_quoted_field(haystack: &str, key: &str) -> Option<String> {
+    let needle = format!("{}:\"", key);
+    let start = haystack.find(&needle)? + needle.len();
+    let rest = &haystack[start..];
+    let end = rest.find('"')?;
+    let val = &rest[..end];
+    if val.starts_with("https://") {
+        Some(val.to_string())
+    } else {
+        None
+    }
+}
+
+impl ApiClient {
+    /// Extrae automáticamente el video de fondo PC global (`bgGB_pc` o `bg_pc`)
+    /// y el póster desde el sitio oficial de Netmarble cuando sale un nuevo parche.
+    pub fn parse_official_site_background(raw_html: &str) -> Option<(String, String)> {
+        let normalized = raw_html.replace("\\u002F", "/");
+        let video = extract_quoted_field(&normalized, "bgGB_pc")
+            .or_else(|| extract_quoted_field(&normalized, "bg_pc"))
+            .filter(|u| u.ends_with(".mp4") || u.ends_with(".webm"))?;
+
+        // Buscar póster cercano antes de bgGB_pc/bg_pc si existe
+        let poster = normalized
+            .find("bgGB_pc:\"")
+            .or_else(|| normalized.find("bg_pc:\""))
+            .and_then(|pos| {
+                let window_start = pos.saturating_sub(300);
+                let slice = &normalized[window_start..pos];
+                let jpg_end = slice.rfind(".jpg")? + 4;
+                let url_start = slice[..jpg_end].rfind("https://")?;
+                Some(slice[url_start..jpg_end].to_string())
+            })
+            .unwrap_or_default();
+
+        Some((video, poster))
+    }
+
+    pub async fn fetch_official_site_background(&self) -> Result<(String, String)> {
+        let resp = self
+            .client
+            .get(OFFICIAL_SITE_URL)
+            .send()
+            .await
+            .context("No se pudo conectar al sitio oficial de Star Dive")?;
+        if !resp.status().is_success() {
+            return Err(anyhow!("Sitio oficial devolvió HTTP {}", resp.status()));
+        }
+        let html = resp.text().await?;
+        Self::parse_official_site_background(&html)
+            .ok_or_else(|| anyhow!("No se encontró video de fondo oficial en el HTML"))
     }
 }
 

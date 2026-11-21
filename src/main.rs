@@ -758,7 +758,20 @@ async fn get_background_media(
         serde_json::from_str(DEFAULT_BG_MANIFEST_JSON).unwrap_or_default()
     };
 
-    let entry = api::ApiClient::resolve_manifest_entry(&manifest, &resolved_version);
+    let mut entry = api::ApiClient::resolve_manifest_entry(&manifest, &resolved_version);
+
+    // Auto-descubrimiento en vivo desde stardive.netmarble.com cuando no hay manifiesto personalizado
+    if config.background_manifest_url.trim().is_empty() {
+        if let Ok((live_video, live_poster)) = api_client.fetch_official_site_background().await {
+            if !live_video.is_empty() {
+                entry.video_url = live_video;
+            }
+            if !live_poster.is_empty() {
+                entry.poster_url = live_poster;
+            }
+        }
+    }
+
     let cache_dir = LauncherConfig::app_media_cache_dir();
 
     let cached_video_path = if config.animated_background && entry.video_url.starts_with("https://") {

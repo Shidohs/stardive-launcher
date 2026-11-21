@@ -51,7 +51,7 @@ impl Default for ApiClient {
         });
         let (video, poster) = ApiClient::parse_launcher_game_meta(&payload).unwrap();
         assert!(video.ends_with(".webm"));
-        assert!(poster.ends_with(".webp"));
+        assert!(poster.is_empty());
     }
 }
 
@@ -314,12 +314,17 @@ impl ApiClient {
             .filter(|s| s.starts_with("https://"))
             .unwrap_or("")
             .to_string();
-        let poster = data
-            .get("mainBgImageUrl")
-            .and_then(|v| v.as_str())
-            .filter(|s| s.starts_with("https://"))
-            .unwrap_or("")
-            .to_string();
+        // Netmarble suele dejar mainBgImageUrl desactualizado cuando actualiza mainBgVideoUrl;
+        // solo usamos mainBgImageUrl si no existe un video oficial activo.
+        let poster = if video.is_empty() {
+            data.get("mainBgImageUrl")
+                .and_then(|v| v.as_str())
+                .filter(|s| s.starts_with("https://"))
+                .unwrap_or("")
+                .to_string()
+        } else {
+            String::new()
+        };
         if video.is_empty() && poster.is_empty() {
             None
         } else {

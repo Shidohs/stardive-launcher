@@ -49,11 +49,15 @@ function applyCachedPosterImmediately() {
   if (!bgArt) return;
   try {
     const cachedPoster = localStorage.getItem("stardive_last_poster");
-    if (cachedPoster) {
+    if (cachedPoster && !cachedPoster.includes("4fl61785289205401")) {
       bgArt.style.backgroundImage = `url('${cachedPoster}')`;
       bgArt.classList.add("ready");
+      return;
     }
+    localStorage.removeItem("stardive_last_poster");
   } catch (_) {}
+  bgArt.style.backgroundImage = "url('assets/bg.jpg')";
+  bgArt.classList.add("ready");
 }
 
 // Initialize on DOM load
@@ -993,7 +997,7 @@ async function loadDynamicBackground() {
       if (video.getAttribute("data-src") !== srcUrl) {
         video.classList.remove("ready");
         video.setAttribute("data-src", srcUrl);
-        video.oncanplaythrough = () => {
+        video.oncanplay = () => {
           video.classList.add("ready");
           syncBackgroundPlayback();
         };
@@ -1002,23 +1006,8 @@ async function loadDynamicBackground() {
           video.removeAttribute("src");
           syncBackgroundPlayback();
         };
-        // Pre-buffer into RAM blob when allowed so playback never stalls on CDN range requests
-        fetch(srcUrl)
-          .then((r) => (r.ok ? r.blob() : Promise.reject(new Error("HTTP " + r.status))))
-          .then((blob) => {
-            if (video.getAttribute("data-src") !== srcUrl) return;
-            const prevBlob = video.getAttribute("data-blob-url");
-            if (prevBlob) URL.revokeObjectURL(prevBlob);
-            const blobUrl = URL.createObjectURL(blob);
-            video.setAttribute("data-blob-url", blobUrl);
-            video.src = blobUrl;
-            video.load();
-          })
-          .catch(() => {
-            if (video.getAttribute("data-src") !== srcUrl) return;
-            video.src = srcUrl;
-            video.load();
-          });
+        video.src = srcUrl;
+        video.load();
       }
     } else {
       video.pause();
